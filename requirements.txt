@@ -1,0 +1,9 @@
+adafruit_bus_device
+adafruit_motorkit
+adafruit_motor
+adafruit_register
+adafruit_connection_manager
+adafruit_pca9685
+adafruit_ticks
+adafruit_minimqtt
+neopixel

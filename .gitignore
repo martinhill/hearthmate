@@ -1,0 +1,7 @@
+__pycache__/
+/lib/
+/.vscode/
+/.ropeproject/
+/build/
+/reference/
+
