@@ -1,4 +1,3 @@
-from logging import warning
 import time
 import os
 import wifi
@@ -12,9 +11,10 @@ from state_machine import StateMachine, State
 from hw_test import TestMotion
 from hardware import get_hardware
 from damper import create_damper_from_env
+from linear import LinearTimeClose
 
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO)
+logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
 
 class IdleState(State):
     """
@@ -56,6 +56,7 @@ def init_mqtt_client(
     mqtt_host=os.getenv('MQTT_HOST'),
     mqtt_user=os.getenv('MQTT_USER'),
     mqtt_password=os.getenv('MQTT_PASSWORD'),
+    command_topic=None
 ):
     # Create a socket pool
     pool = socketpool.SocketPool(wifi.radio)
@@ -97,21 +98,24 @@ def init_state_machine(mqtt_client, hardware, damper):
     machine.data["damper"] = damper
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=60.0))
     machine.add_state(IdleState())
+    machine.add_state(LinearTimeClose(30*60))
     machine.set_state("idle")
     return machine
 
 
 if __name__ == "__main__":
 
-    mqtt_topic=os.getenv('MQTT_TOPIC'),
+    mqtt_topic=os.getenv('MQTT_TOPIC')
+    command_topic = mqtt_topic + "/command"
     def message_callback(client, topic, message):
         global machine
         # This method is called when a topic the client is subscribed to
         # has a new message.
-        command_topic = mqtt_topic + "/command"
         if topic == command_topic:
             if message == "test":
                 machine.set_state("test_motion")
+            elif message == "close":
+                machine.set_state("linear_time_close")
             elif message == "stop":
                 machine.set_state("idle")
             else:
@@ -119,7 +123,7 @@ if __name__ == "__main__":
         else:
             logger.info("New message on topic %s: %s", topic, message)
 
-    mqtt_client = init_mqtt_client(message_callback, mqtt_topic=mqtt_topic)
+    mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
     try:
         logger.info("Connecting to MQTT...")
         mqtt_client.connect()
@@ -130,7 +134,7 @@ if __name__ == "__main__":
     # Get the hardware interface
     hardware = get_hardware()
     damper = create_damper_from_env()
-    machine = init_state_machine(mqtt_client, hardware)
+    machine = init_state_machine(mqtt_client, hardware, damper)
 
     # Main loop
     while True:
