@@ -1,6 +1,6 @@
 # Hearthmate
 
-An experimental robot that controls a wood stove damper to achieve optimal combustion. Optimal combustion is achieved by maximizing heat
+An experimental robot that controls a wood stove vent to achieve optimal combustion. Optimal combustion is achieved by maximizing heat
 retention and minimizing creosote buildup.
 
 ## Hardware
@@ -10,7 +10,7 @@ retention and minimizing creosote buildup.
 - 2.3 Kg*cm NEMA16 Bipolar stepper
 - [ams AS5600 position sensor](https://ams-osram.com/products/sensor-solutions/position-sensors/ams-as5600-position-sensor)
 - 5:1 gear ratio belt and pulley connecting motor to drive shaft
-- mechanical linkage from drive shaft to damper control lever arm
+- mechanical linkage from drive shaft to vent control lever arm
 
 ## Software stack
 

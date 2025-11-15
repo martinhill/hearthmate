@@ -16,30 +16,30 @@ ENCODER_FOURTH_QUADRANT_END = ENCODER_MAX_VALUE
 # Number of motor steps per revolution of the motor
 MOTOR_STEPS_PER_REVOLUTION = os.getenv("MOTOR_STEPS_PER_REVOLUTION", 200)
 
-class Damper:
+class Vent:
     """
-    Damper represents the state of the damper as a percentage (0.0 to 1.0) of the way closed,
+    Vent represents the state of the air vent as a percentage (0.0 to 1.0) of the way closed,
     inferred from the encoder raw angle position. 0.0 is fully open, 1.0 is fully closed.
     """
 
     ## Calibrated values
 
-    # The AS5600 encoder raw angle position when the damper is fully open
+    # The AS5600 encoder raw angle position when the air vent is fully open
     # A value of None indicates that the position has not been calibrated yet
-    # Note: Encoder raw angle value increases with counterclockwise rotation (closing the damper)
+    # Note: Encoder raw angle value increases with counterclockwise rotation (closing the air vent)
     open_position = None
-    # The AS5600 encoder raw angle position when the damper is fully closed,
+    # The AS5600 encoder raw angle position when the air vent is fully closed,
     # with the number of zero crossings taken into account
     closed_position = None
     
     # Number of zero crossings of the encoder raw angle position between fully open and fully closed,
-    # reflecting the gear ratio of the motor and the damper, and the damper's physical range of motion.
+    # reflecting the gear ratio of the motor and the air vent, and the air vent's physical range of motion.
     num_zero_crossings = 0 
 
     ## Current state
 
     # Current revolution of the encoder. Incremented when the encoder raw angle position crosses 0.
-    # A value of 0 indicates that the damper is at the fully open position if the encoder is reading open_position.
+    # A value of 0 indicates that the air vent is at the fully open position if the encoder is reading open_position.
     current_revolution = 0
 
     # Last encoder raw angle position read from the hardware
@@ -70,13 +70,15 @@ class Damper:
             self.current_revolution -= 1
         self.last_angle = current_angle
 
-    def get_position(self, current_angle):
+    def get_position(self, current_angle=None):
         """
-        Get the current position of the damper as a percentage of the way closed.
+        Get the current position of the air vent as a percentage of the way closed.
         Assumes that the encoder raw angle position has already been updated from the hardware
         by calling update_from_hardware().
         Requires that open_position and closed_position have been set (calibrated).
         """
+        if current_angle is None:
+            current_angle = self.last_angle
         # Assumes calibration has occurred
         open_pos = self.open_position if self.open_position is not None else 0
         closed_pos = self.closed_position if self.closed_position is not None else ENCODER_MAX_VALUE
@@ -88,7 +90,7 @@ class Damper:
 
     def open(self, amount=0.1):
         """
-        Calculate the number of motor steps and target angle to open the damper by the specified amount (0.0 to 1.0).
+        Calculate the number of motor steps and target angle to open the air vent by the specified amount (0.0 to 1.0).
         Returns (num_steps, target_angle, revolutions)
         Assumes that the encoder raw angle position has already been updated from the hardware
         by calling update_from_hardware().
@@ -102,7 +104,7 @@ class Damper:
 
     def close(self, amount=0.1):
         """
-        Calculate the number of motor steps and target angle to close the damper by the specified amount (0.0 to 1.0).
+        Calculate the number of motor steps and target angle to close the air vent by the specified amount (0.0 to 1.0).
         Returns (num_steps, target_angle, revolutions)
         Assumes that the encoder raw angle position has already been updated from the hardware
         by calling update_from_hardware().
@@ -116,7 +118,7 @@ class Damper:
 
     def move_to_position(self, position=0.5):
         """
-        Calculate the number of motor steps and target angle to move the damper to the specified position (0.0 to 1.0).
+        Calculate the number of motor steps and target angle to move the air vent to the specified position (0.0 to 1.0).
         Returns (num_steps, direction, target_angle, revolutions)
         Assumes that the encoder raw angle position has already been updated from the hardware
         by calling update_from_hardware().
@@ -162,11 +164,11 @@ class Damper:
         return (motor_steps, direction, target_encoder_angle, revolutions)
 
 
-def create_damper_from_env():
+def create_vent_from_env():
     """
-    Create a Damper object from the environment variables.
+    Create a Vent object from the environment variables.
     """
     open_position = int(os.getenv("OPEN_POSITION"))
     closed_position = int(os.getenv("CLOSED_POSITION"))
     num_zero_crossings = int(os.getenv("NUM_ZERO_CROSSINGS"))
-    return Damper(open_position, closed_position, num_zero_crossings)
+    return Vent(open_position, closed_position, num_zero_crossings)

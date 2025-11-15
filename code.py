@@ -10,8 +10,8 @@ import adafruit_logging as logging
 from state_machine import StateMachine, State
 from hw_test import TestMotion
 from hardware import get_hardware
-from damper import create_damper_from_env
-from linear import LinearTimeClose
+from airvent import create_vent_from_env
+from vent_closer import VentCloser
 
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
@@ -36,7 +36,7 @@ class IdleState(State):
 class Calibrate(State):
     """
     Calibrate the motor/encoder by observing the encoder position when moving it back and forth a specified number of times.
-    The motion should be first to fully open the damper, then to fully close it.
+    The motion should be first to fully open the air vent, then to fully close it.
     Assumes the encoder direction pin is pulled high.
     """
 
@@ -89,16 +89,16 @@ def init_mqtt_client(
     return mqtt_client
 
 
-def init_state_machine(mqtt_client, hardware, damper):
+def init_state_machine(mqtt_client, hardware, vent):
 
     # Create the state machine
     machine = StateMachine()
     machine.data["hardware"] = hardware
     machine.data["mqtt_client"] = mqtt_client
-    machine.data["damper"] = damper
-    machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=60.0))
+    machine.data["vent"] = vent
+    machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
-    machine.add_state(LinearTimeClose(30*60))
+    machine.add_state(VentCloser(30*60))
     machine.set_state("idle")
     return machine
 
@@ -133,8 +133,8 @@ if __name__ == "__main__":
 
     # Get the hardware interface
     hardware = get_hardware()
-    damper = create_damper_from_env()
-    machine = init_state_machine(mqtt_client, hardware, damper)
+    vent = create_vent_from_env()
+    machine = init_state_machine(mqtt_client, hardware, vent)
 
     # Main loop
     while True:

@@ -5,6 +5,9 @@ import digitalio
 from adafruit_motor import stepper
 from adafruit_motorkit import MotorKit
 from adafruit_bus_device.i2c_device import I2CDevice
+import adafruit_logging as logging
+
+logger = logging.getLogger(__name__)
 
 
 class Hardware:
@@ -43,11 +46,11 @@ class Hardware:
             self.motor.onestep(direction=direction, style=stepper.DOUBLE)
             time.sleep(delay)
 
-    def close_damper(self, amount=10, delay=0.05):
+    def close_vent(self, amount=10, delay=0.05):
         self._move(stepper.BACKWARD, amount, delay)
         self.motor.release()
 
-    def open_damper(self, amount=10, delay=0.05):
+    def open_vent(self, amount=10, delay=0.05):
         self._move(stepper.FORWARD, amount, delay)
         self.motor.release()
 
@@ -141,11 +144,11 @@ def get_hardware():
     i2c.try_lock()
     scan = i2c.scan()
     i2c.unlock()
-    print("I2C scan:", [hex(addr) for addr in scan])
+    logger.info("I2C scan: %s", [hex(addr) for addr in scan])
 
     if 0x36 in scan:
         hardware = Hardware(i2c)
     else:
-        print("AS5600 not found - using mock hardware")
+        logger.info("AS5600 not found - using mock hardware")
         hardware = MockHardware(i2c)
     return hardware
