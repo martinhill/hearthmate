@@ -1,7 +1,6 @@
 # Hearthmate
 
-An experimental robot that controls a wood stove vent to achieve optimal combustion. Optimal combustion is achieved by maximizing heat
-retention and minimizing creosote buildup.
+An experimental robot that controls a wood stove air vent to achieve optimal combustion. Optimal combustion is achieved by maximizing heat retention and minimizing creosote buildup.
 
 ## Hardware
 
@@ -20,3 +19,8 @@ retention and minimizing creosote buildup.
 - [Adafruit MiniMQTT library](https://docs.circuitpython.org/projects/minimqtt/en/latest/)
 - Plus each library's respective dependencies
 
+## TODO
+
+- MQTT reconnect
+- Sanity check in airvent.Vent to handle missed encoder zero crossing and update current_revolution
+- type annotations

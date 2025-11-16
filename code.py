@@ -8,10 +8,11 @@ from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException
 import adafruit_logging as logging
 
 from state_machine import StateMachine, State
-from hw_test import TestMotion
-from hardware import get_hardware
+from hw_test import TestMotion, logger as test_logger
+from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
-from vent_closer import VentCloser, LinearVentFunction
+from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
+from logging import MQTTHandler
 
 CLOSE_TIME = 60*60
 
@@ -126,6 +127,16 @@ if __name__ == "__main__":
             logger.info("New message on topic %s: %s", topic, message)
 
     mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
+
+    # MQTT logging
+    mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/status")
+    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s: %(message)s")
+    mqtt_handler.setFormatter(timestamp_formatter)
+    logger.addHandler(mqtt_handler)
+    vent_logger.addHandler(mqtt_handler)
+    hw_logger.addHandler(mqtt_handler)
+    test_logger.addHandler(mqtt_handler)
+
     try:
         logger.info("Connecting to MQTT...")
         mqtt_client.connect()
@@ -140,22 +151,8 @@ if __name__ == "__main__":
 
     # Main loop
     while True:
-        machine.update()
-
-
-    # old code from main loop
-    loop_counter = 0
-    total_loop_time = 0
-    while False:
-        machine.update()
-        if mqtt_client.is_connected():
-            loop_start = time.monotonic_ns()
-            mqtt_client.loop()
-            loop_end = time.monotonic_ns()
-            loop_time = loop_end - loop_start
-            total_loop_time += loop_time
-            loop_counter += 1
-            if loop_counter % 100 == 0:
-                logger.debug(f"Average loop time: {total_loop_time / loop_counter / 1000} us")
-        else:
-            time.sleep(0.01)
+        try:
+            machine.update()
+        except MMQTTException as e:
+            logger.error("Caught %s: attempting reconnect...", e)
+            mqtt_client.reconnect()

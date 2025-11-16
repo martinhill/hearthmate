@@ -95,7 +95,7 @@ class Monitoring(State):
             # Should initiate motion?
             ideal_position = func.get_position()
             steps = vent.move_to_position(ideal_position)[0]
-            logger.debug("monitoring: ideal_position=%.6f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
+            logger.debug("monitoring: ideal_position=%.4f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
             if steps >= self.min_steps or ideal_position > 0.999:
                 # Initiate motion
                 machine.set_state("closing")
