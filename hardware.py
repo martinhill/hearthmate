@@ -8,6 +8,7 @@ from adafruit_bus_device.i2c_device import I2CDevice
 import adafruit_logging as logging
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class Hardware:

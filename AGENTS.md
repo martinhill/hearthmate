@@ -1,7 +1,7 @@
 # Agent Guidelines for Hearthmate
 
 ## Project Overview
-CircuitPython project for an automated wood stove damper controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor. Main files: `code.py`, `state_machine.py`, `testing.py`, `hardware.py`.
+CircuitPython project for an automated wood stove air vent controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor. Main files: `code.py`, `state_machine.py`, `testing.py`, `hardware.py`.
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device

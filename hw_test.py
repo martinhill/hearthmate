@@ -6,6 +6,7 @@ import adafruit_logging as logging
 from state_machine import State, StateMachine
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 direction_names = {

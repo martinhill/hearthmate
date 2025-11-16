@@ -11,7 +11,9 @@ from state_machine import StateMachine, State
 from hw_test import TestMotion
 from hardware import get_hardware
 from airvent import create_vent_from_env
-from vent_closer import VentCloser
+from vent_closer import VentCloser, LinearVentFunction
+
+CLOSE_TIME = 60*60
 
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
@@ -98,7 +100,7 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.data["vent"] = vent
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
-    machine.add_state(VentCloser(30*60))
+    machine.add_state(VentCloser(LinearVentFunction(CLOSE_TIME)))
     machine.set_state("idle")
     return machine
 
@@ -115,7 +117,7 @@ if __name__ == "__main__":
             if message == "test":
                 machine.set_state("test_motion")
             elif message == "close":
-                machine.set_state("linear_time_close")
+                machine.set_state("vent_closer")
             elif message == "stop":
                 machine.set_state("idle")
             else:
