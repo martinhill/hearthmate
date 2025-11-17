@@ -12,13 +12,17 @@ from hw_test import TestMotion, logger as test_logger
 from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
-from logging import MQTTHandler
+from logging import MQTTHandler, FileHandler
 from connections import WiFiConnectionManager, MQTTConnectionManager
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
+log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
+file_log_level = getattr(logging, os.getenv("FILE_LOG_LEVEL", "INFO"), logging.INFO)
+logger.setLevel(log_level)
+stream_handler = logging.StreamHandler()
+logger.addHandler(stream_handler)
 
 class IdleState(State):
     """
@@ -132,14 +136,29 @@ if __name__ == "__main__":
     mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
     mqtt_conn_manager = MQTTConnectionManager(mqtt_client, wifi_manager)
 
-    # MQTT logging
+    # MQTT and file logging
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/status")
-    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s: %(message)s")
+    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
     mqtt_handler.setFormatter(timestamp_formatter)
     logger.addHandler(mqtt_handler)
     vent_logger.addHandler(mqtt_handler)
+    vent_logger.setLevel(log_level)
     hw_logger.addHandler(mqtt_handler)
+    hw_logger.setLevel(log_level)
     test_logger.addHandler(mqtt_handler)
+    test_logger.setLevel(log_level)
+    file_handler = FileHandler("logs")
+    file_handler.setFormatter(timestamp_formatter)
+    file_handler.setLevel(file_log_level)
+    logger.addHandler(file_handler)
+    vent_logger.addHandler(file_handler)
+    hw_logger.addHandler(file_handler)
+    test_logger.addHandler(file_handler)
+    # MQTT client should log to file only
+    mqtt_logger = logging.getLogger("mqtt")
+    mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
+    mqtt_logger.addHandler(file_handler)
+    mqtt_client.logger = mqtt_logger
 
     # Attempt initial MQTT connection
     try:

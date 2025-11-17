@@ -8,7 +8,6 @@ except ImportError:
 from state_machine import State, StateMachine
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class VentFunctionABC():
@@ -45,7 +44,7 @@ class VentFunctionABC():
     def adjust(self, new_position):
         new_position = max(0.0, min(new_position,1.0))
         self.time_adjustment = self.inverse(new_position) - self.time_func() + self.start_time
-        logger.debug("Function adjust: time_adjustment=%d", self.time_adjustment)
+        logger.info("Function adjust: time_adjustment=%d", self.time_adjustment)
 
 
 class LinearVentFunction(VentFunctionABC):
@@ -76,7 +75,7 @@ class Monitoring(State):
         vent = machine.data["vent"]
         vent.update_from_hardware(hardware.read_raw_angle())
         self.vent_position = vent.get_position()
-        logger.debug("monitoring: vent_position=%.3f", self.vent_position)
+        logger.info("Monitoring: vent_position=%.3f", self.vent_position)
         hardware.set_pixel_blue()
 
     def update(self, machine):
@@ -95,7 +94,7 @@ class Monitoring(State):
             # Should initiate motion?
             ideal_position = func.get_position()
             steps = vent.move_to_position(ideal_position)[0]
-            logger.debug("monitoring: ideal_position=%.4f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
+            logger.debug("ideal_position=%.4f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
             if steps >= self.min_steps or ideal_position > 0.999:
                 # Initiate motion
                 machine.set_state("closing")
@@ -118,7 +117,7 @@ class Override(State):
         self.vent_position = vent.get_position()
         hardware.set_pixel_green()
         self.last_check_time = time.time()
-        logger.debug("Override: vent_position=%.3f", self.vent_position)
+        logger.info("Override: vent_position=%.3f", self.vent_position)
 
     def update(self, machine):
         hardware = machine.data["hardware"]
@@ -136,7 +135,7 @@ class Override(State):
             func = machine.data["function"]
             position = vent.get_position()
             func.adjust(position)
-            logger.debug("Override: adjusted function to position %.3f", position)
+            logger.info("Override: adjusted function to position %.3f", position)
             machine.set_state("monitoring")
 
 
@@ -147,27 +146,28 @@ class Closing(State):
     def __init__(self, min_steps = 5, overshoot = 2):
         super().__init__("closing")
         self.min_steps = min_steps
-        self.overshoot = overshoot # extra steps to counter mechanical friction
+        self.overshoot = overshoot # extra steps to counter mechanical friction and compliance
 
     def enter(self, machine):
         hardware = machine.data["hardware"]
         hardware.set_pixel_red()
+        func = machine.data["function"]
+        self.ideal_position = func.get_position()
+        logger.info("Closing to position %.3f", self.ideal_position)
 
     def update(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
-        func = machine.data["function"]
-        ideal_position = func.get_position()
         vent.update_from_hardware(hardware.read_raw_angle())
-        steps, direction, encoder, revs = vent.move_to_position(ideal_position)
-        logger.debug("closing: ideal_position=%.3f, steps=%d, direction=%d", ideal_position, steps, direction)
+        steps, direction, encoder, revs = vent.move_to_position(self.ideal_position)
+        logger.debug("ideal_position=%.3f, steps=%d, direction=%d", self.ideal_position, steps, direction)
         if steps > self.min_steps:
             if direction:
                 hardware.open_vent(steps + self.overshoot)
             else:
                 hardware.close_vent(steps + self.overshoot)
         else:
-            if ideal_position > 0.999:
+            if self.ideal_position > 0.999:
                 machine.set_state("closed")
             else:
                 machine.set_state("monitoring")
@@ -193,7 +193,7 @@ class Closed(State):
         # brute force
         hardware.close_vent(steps+3)
         self.last_position = 1.0
-        logger.debug("Closed")
+        logger.info("Closed")
 
     def update(self, machine):
         hardware = machine.data["hardware"]
@@ -237,7 +237,7 @@ class VentCloser(State):
         function.start(vent.get_position())
 
         self.machine.set_state("monitoring")
-        logger.info("Closing vent entered")
+        logger.info("%s entered", self.name)
 
     def exit(self, machine):
         logger.info("exit %s", self.name)
