@@ -73,7 +73,7 @@ class Pausing(State):
 
     def update(self, machine):
         # Wait between moves and call the MQTT loop
-        machine.data["mqtt_client"].loop()
+        machine.mqtt_loop()
         current_time = time.time()
         if current_time >= self.wait_until:
             machine.set_state("switch")

@@ -83,7 +83,7 @@ class Monitoring(State):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
         func = machine.data["function"]
-        machine.data["mqtt_client"].loop()
+        machine.mqtt_loop()
         vent.update_from_hardware(hardware.read_raw_angle())
 
         # Override detection
@@ -123,7 +123,6 @@ class Override(State):
     def update(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
-        # machine.data["mqtt_client"].loop()
 
         # Override detection
         vent.update_from_hardware(hardware.read_raw_angle())
@@ -188,7 +187,7 @@ class Closed(State):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
         hardware.set_pixel_white()
-        machine.data["mqtt_client"].loop()
+        machine.mqtt_loop()
         vent.update_from_hardware(hardware.read_raw_angle())
         steps, direction, encoder, revs = vent.move_to_position(1.0)
         # brute force
@@ -200,7 +199,7 @@ class Closed(State):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
 
-        machine.data["mqtt_client"].loop()
+        machine.mqtt_loop()
 
         vent.update_from_hardware(hardware.read_raw_angle())
         vent_position = vent.get_position()

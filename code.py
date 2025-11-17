@@ -13,6 +13,7 @@ from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
 from logging import MQTTHandler
+from connections import WiFiConnectionManager, MQTTConnectionManager
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 
@@ -32,8 +33,7 @@ class IdleState(State):
         logger.info("Idle")
 
     def update(self, machine):
-        mqtt_client = machine.data["mqtt_client"]
-        mqtt_client.loop()
+         machine.mqtt_loop()
 
 
 class Calibrate(State):
@@ -108,8 +108,9 @@ def init_state_machine(mqtt_client, hardware, vent):
 
 if __name__ == "__main__":
 
-    mqtt_topic=os.getenv('MQTT_TOPIC')
+    mqtt_topic = os.getenv("MQTT_TOPIC")
     command_topic = mqtt_topic + "/command"
+
     def message_callback(client, topic, message):
         global machine
         # This method is called when a topic the client is subscribed to
@@ -126,7 +127,10 @@ if __name__ == "__main__":
         else:
             logger.info("New message on topic %s: %s", topic, message)
 
+    # Initialize connection managers
+    wifi_manager = WiFiConnectionManager()
     mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
+    mqtt_conn_manager = MQTTConnectionManager(mqtt_client, wifi_manager)
 
     # MQTT logging
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/status")
@@ -137,12 +141,13 @@ if __name__ == "__main__":
     hw_logger.addHandler(mqtt_handler)
     test_logger.addHandler(mqtt_handler)
 
+    # Attempt initial MQTT connection
     try:
         logger.info("Connecting to MQTT...")
         mqtt_client.connect()
         mqtt_client.publish(mqtt_topic + "/status", "Hello, world!")
     except MMQTTException as e:
-        logger.error(f"Failed to connect to MQTT: {e}")
+        logger.error("Failed to connect to MQTT: %s", e)
 
     # Get the hardware interface
     hardware = get_hardware()
@@ -150,13 +155,27 @@ if __name__ == "__main__":
     machine = init_state_machine(mqtt_client, hardware, vent)
 
     # Main loop
+    logger.info("Starting main loop")
     while True:
+        current_time = time.monotonic()
+
+        # Priority 1: Ensure WiFi is connected
+        wifi_manager.check_and_recover(current_time)
+
+        # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
+        mqtt_conn_manager.attempt_reconnect(current_time)
+
+        # Priority 3: Run state machine
         try:
             machine.update()
         except MMQTTException as e:
-            logger.error("Caught %s: attempting reconnect...", e)
-            mqtt_client.reconnect()
+            # Log but don't try to reconnect here - let managers handle it
+            logger.error("MQTT error during state update: %s", e)
         except OSError as e:
-            # Happened in MQTTHandler.emit
-            print(e)
+            logger.error("Network/IO error during state update: %s", e)
+        except Exception as e:
+            logger.error("Unexpected error in main loop: %s", e)
+
+        # Small sleep to prevent busy-waiting
+        time.sleep(0.1)
 
