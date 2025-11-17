@@ -1,4 +1,5 @@
 import time
+import os
 import board
 import neopixel
 import digitalio
@@ -123,17 +124,23 @@ class MockHardware(Hardware):
         # Simulated encoder state
         self.current_angle = 0.0  # Current angle in degrees
         self.last_direction = stepper.FORWARD
+        self.open_position = os.getenv("OPEN_POSITION")
 
         # Create a mock motor that updates the angle when stepped
         self.motor = MockStepper(self)
 
+        # Use real Neopixel and LED
+        self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)
+        self.led = digitalio.DigitalInOut(board.LED)
+        self.led.direction = digitalio.Direction.OUTPUT
+
     def read_encoder_status(self):
         # Return a simulated "good" status
-        return 0x20  # Arbitrary status value indicating normal operation
+        return 0x67  # Arbitrary status value indicating normal operation
 
     def read_raw_angle(self):
         # Convert current angle to raw encoder value (4096 values for 360 degrees)
-        raw_value = int((self.current_angle % 360) * 4096 / 360)
+        raw_value = int((self.current_angle % 360) * 4096 / 360) + self.open_position
         return raw_value
 
 

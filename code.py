@@ -14,7 +14,7 @@ from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
 from logging import MQTTHandler
 
-CLOSE_TIME = 60*60
+VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 
 logger = logging.getLogger(__name__)
 logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
@@ -101,7 +101,7 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.data["vent"] = vent
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
-    machine.add_state(VentCloser(LinearVentFunction(CLOSE_TIME)))
+    machine.add_state(VentCloser(LinearVentFunction(VENT_CLOSE_TIME)))
     machine.set_state("idle")
     return machine
 
@@ -156,3 +156,7 @@ if __name__ == "__main__":
         except MMQTTException as e:
             logger.error("Caught %s: attempting reconnect...", e)
             mqtt_client.reconnect()
+        except OSError as e:
+            # Happened in MQTTHandler.emit
+            print(e)
+
