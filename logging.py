@@ -29,6 +29,8 @@ class MQTTHandler(Handler):
                 self._mqtt_client.publish(self._topic, self.format(record))
         except MQTT.MMQTTException:
             pass
+        except OSError:
+            pass
 
     # To make this work also in CPython's logging.
     def handle(self, record: LogRecord) -> None:

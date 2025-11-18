@@ -214,6 +214,7 @@ if __name__ == "__main__":
     mqtt_logger = logging.getLogger("mqtt")
     mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
     mqtt_logger.addHandler(file_handler)
+    mqtt_logger.addHandler(stream_handler)
     mqtt_client.logger = mqtt_logger
 
     # Get the hardware interface
@@ -236,6 +237,7 @@ if __name__ == "__main__":
     logger.info("Starting main loop")
 
     # Main loop
+    mqtt_exception_raised = False
     while True:
         current_time = time.monotonic()
 
@@ -243,21 +245,24 @@ if __name__ == "__main__":
         wifi_manager.check_and_recover(current_time)
 
         # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
-        if mqtt_conn_manager.attempt_reconnect(current_time):
+        if mqtt_conn_manager.attempt_reconnect(current_time, mqtt_exception_raised):
             hardware.led_off()
+            mqtt_exception_raised = False
 
         # Priority 3: Run state machine
         try:
             machine.update()
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
-            logger.error("MQTT error during state update: %s", e)
+            # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler
+            mqtt_logger.error("MQTT error during state update: %s", e)
             hardware.led_on()
+            mqtt_exception_raised = True
         except OSError as e:
-            logger.error("Network/IO error during state update: %s", e)
+            mqtt_logger.error("Network/IO error during state update: %s", e)
             hardware.led_on()
         except Exception as e:
-            logger.error("Unexpected error in main loop: %s", e)
+            mqtt_logger.error("Unexpected error in main loop: %s", e)
 
         # Small sleep to prevent busy-waiting
         time.sleep(0.1)

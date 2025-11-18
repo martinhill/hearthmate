@@ -116,7 +116,7 @@ class MQTTConnectionManager:
         self.last_reconnect_attempt = 0
         self.mqtt_failures = 0
 
-    def attempt_reconnect(self, current_time):
+    def attempt_reconnect(self, current_time: float, mqtt_exception_raised: bool) -> bool:
         """
         Attempt MQTT reconnection only if WiFi is stable.
 
@@ -132,7 +132,7 @@ class MQTTConnectionManager:
             return False
 
         # WiFi is OK, check if MQTT is connected
-        if self.mqtt_client.is_connected():
+        if self.mqtt_client.is_connected() and not mqtt_exception_raised:
             # Reset counters
             if self.mqtt_failures > 0:
                 logger.info("MQTT reconnected after %d failures", self.mqtt_failures)
