@@ -143,6 +143,13 @@ class MockHardware(Hardware):
         raw_value = int((self.current_angle % 360) * 4096 / 360) + self.open_position
         return raw_value
 
+    def mock_move_to_angle(self, angle):
+        self.current_angle = angle
+
+    def mock_move_to_raw_angle(self, raw_angle):
+        self.current_angle = ((raw_angle - self.open_position + 4096) * 360 / 4096) % 360
+
+
 
 def get_hardware():
     """

@@ -21,7 +21,6 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 
 ## TODO
 
-- Enter vent_closer state from idle based on vent movement pattern
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery)
 - Sanity check in airvent.Vent to handle missed encoder zero crossing and update current_revolution
 - type annotations

@@ -27,17 +27,34 @@ logger.addHandler(stream_handler)
 class IdleState(State):
     """
     Idle state.
+    If vent movement to fully closed position is detected, and then fully open,
+    the state machine will transition to "vent_closer" state.
     """
     def __init__(self):
         super().__init__("idle")
+        self.detected_fully_closed = False
 
     def enter(self, machine):
         hardware = machine.data["hardware"]
         hardware.motor.release()
+        hardware.set_pixel_color((0,32,32)) # teal
         logger.info("Idle")
 
     def update(self, machine):
-         machine.mqtt_loop()
+        machine.mqtt_loop()
+        hardware = machine.data["hardware"]
+        vent = machine.data["vent"]
+        vent.update_from_hardware(hardware.read_raw_angle())
+        position = vent.get_position()
+        if  position > 0.99 and not self.detected_fully_closed:
+            # first detection of vent closed
+            self.detected_fully_closed = True
+            hardware.set_pixel_color((0x8f,0x8f,0)) # yellow
+            logger.info("Detected vent closed")
+        elif position < 0.01 and self.detected_fully_closed:
+            # detected vent fully open after closed position - transition
+            logger.info("Detected vent open - engaging automatic vent closer")
+            machine.set_state("vent_closer")
 
 
 class Calibrate(State):
@@ -106,8 +123,20 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
     machine.add_state(VentCloser(LinearVentFunction(VENT_CLOSE_TIME)))
-    machine.set_state("idle")
     return machine
+
+def check_encoder(hardware):
+    encoder_status = hardware.read_encoder_status()
+    encoder_md = encoder_status & 0x20
+    encoder_ml = encoder_status & 0x10
+    encoder_mh = encoder_status & 0x8
+    if encoder_md and not encoder_mh and not encoder_ml:
+        logger.info("Encoder status ok: magnet detected (STATUS=0x%X)", encoder_status)
+    elif encoder_md and (encoder_ml or encoder_mh):
+        magnet_condition = "weak" if encoder_ml else "strong"
+        logger.warning("Encoder status check: magnet detected but too %s (STATUS=0x%X)", magnet_condition, encoder_status)
+    else:
+        logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
 
 
 if __name__ == "__main__":
@@ -126,6 +155,30 @@ if __name__ == "__main__":
                 machine.set_state("vent_closer")
             elif message == "stop":
                 machine.set_state("idle")
+            elif message.startswith("set_vent"):
+                try:
+                    value = float(message.split(" ")[1])
+                    vent.update_from_hardware(hardware.read_raw_angle())
+                    steps, direction, encoder_angle, revs = vent.move_to_position(value)
+                    hardware.mock_move_to_raw_angle(encoder_angle)
+                except Exception as e:
+                    logger.error("Invalid command: %s - %s", message, e)
+            elif message.startswith("open_vent"):
+                try: 
+                    amount = float(message.split(" ")[1])
+                except:
+                    amount = 0.1
+                vent.update_from_hardware(hardware.read_raw_angle())
+                steps, encoder_angle, revs = vent.open(amount)
+                hardware.mock_move_to_raw_angle(encoder_angle)
+            elif message.startswith("close_vent"):
+                try:
+                    amount = float(message.split(" ")[1])
+                except:
+                    amount = 0.1
+                vent.update_from_hardware(hardware.read_raw_angle())
+                steps, encoder_angle, revs = vent.close(amount)
+                hardware.mock_move_to_raw_angle(encoder_angle)
             else:
                 logger.warning("Unknown command: %s", message)
         else:
@@ -160,21 +213,26 @@ if __name__ == "__main__":
     mqtt_logger.addHandler(file_handler)
     mqtt_client.logger = mqtt_logger
 
+    # Get the hardware interface
+    hardware = get_hardware()
+    hardware.led_on()
+    check_encoder(hardware)
+    vent = create_vent_from_env()
+    machine = init_state_machine(mqtt_client, hardware, vent)
+
     # Attempt initial MQTT connection
     try:
         logger.info("Connecting to MQTT...")
         mqtt_client.connect()
         mqtt_client.publish(mqtt_topic + "/status", "Hello, world!")
+        hardware.led_off()
     except MMQTTException as e:
         logger.error("Failed to connect to MQTT: %s", e)
 
-    # Get the hardware interface
-    hardware = get_hardware()
-    vent = create_vent_from_env()
-    machine = init_state_machine(mqtt_client, hardware, vent)
+    machine.set_state("idle")
+    logger.info("Starting main loop")
 
     # Main loop
-    logger.info("Starting main loop")
     while True:
         current_time = time.monotonic()
 
@@ -182,7 +240,8 @@ if __name__ == "__main__":
         wifi_manager.check_and_recover(current_time)
 
         # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
-        mqtt_conn_manager.attempt_reconnect(current_time)
+        if mqtt_conn_manager.attempt_reconnect(current_time):
+            hardware.led_off()
 
         # Priority 3: Run state machine
         try:
@@ -190,8 +249,10 @@ if __name__ == "__main__":
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
             logger.error("MQTT error during state update: %s", e)
+            hardware.led_on()
         except OSError as e:
             logger.error("Network/IO error during state update: %s", e)
+            hardware.led_on()
         except Exception as e:
             logger.error("Unexpected error in main loop: %s", e)
 
