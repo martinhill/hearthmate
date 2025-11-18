@@ -13,7 +13,7 @@ from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
 from logging import MQTTHandler, FileHandler
-from connections import WiFiConnectionManager, MQTTConnectionManager
+from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 
@@ -207,6 +207,9 @@ if __name__ == "__main__":
     vent_logger.addHandler(file_handler)
     hw_logger.addHandler(file_handler)
     test_logger.addHandler(file_handler)
+    conn_logger.addHandler(file_handler)
+    conn_logger.addHandler(stream_handler)
+    conn_logger.setLevel(log_level)
     # MQTT client should log to file only
     mqtt_logger = logging.getLogger("mqtt")
     mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))

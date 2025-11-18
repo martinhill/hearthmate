@@ -6,7 +6,6 @@ import adafruit_logging as logging
 from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException
 
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, os.getenv("LOGGING_LEVEL", "INFO"), logging.INFO))
 
 
 class WiFiConnectionManager:
@@ -129,7 +128,7 @@ class MQTTConnectionManager:
         """
         # First check WiFi health
         if not self.wifi_manager.is_connected():
-            logger.debug("Cannot reconnect MQTT - WiFi is disconnected")
+            logger.info("Cannot reconnect MQTT - WiFi is disconnected")
             return False
 
         # WiFi is OK, check if MQTT is connected
