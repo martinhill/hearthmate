@@ -14,6 +14,7 @@ from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
 from logging import MQTTHandler, FileHandler
 from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
+from homeassistant import HomeAssistant, logger as ha_logger
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 
@@ -23,6 +24,7 @@ file_log_level = getattr(logging, os.getenv("FILE_LOG_LEVEL", "INFO"), logging.I
 logger.setLevel(log_level)
 stream_handler = logging.StreamHandler()
 logger.addHandler(stream_handler)
+mqtt_logger = logging.getLogger("mqtt")
 
 class IdleState(State):
     """
@@ -109,6 +111,7 @@ def init_mqtt_client(
     mqtt_client.on_connect = connected
     mqtt_client.on_disconnect = disconnected
     mqtt_client.on_message = message_callback
+    mqtt_client.logger = mqtt_logger
 
     return mqtt_client
 
@@ -127,9 +130,9 @@ def init_state_machine(mqtt_client, hardware, vent):
 
 def check_encoder(hardware):
     encoder_status = hardware.read_encoder_status()
-    encoder_md = encoder_status & 0x20
-    encoder_ml = encoder_status & 0x10
-    encoder_mh = encoder_status & 0x8
+    encoder_md = bool(encoder_status & 0x20)
+    encoder_ml = bool(encoder_status & 0x10)
+    encoder_mh = bool(encoder_status & 0x8)
     if encoder_md and not encoder_mh and not encoder_ml:
         logger.info("Encoder status ok: magnet detected (STATUS=0x%X)", encoder_status)
     elif encoder_md and (encoder_ml or encoder_mh):
@@ -137,6 +140,30 @@ def check_encoder(hardware):
         logger.warning("Encoder status check: magnet detected but too %s (STATUS=0x%X)", magnet_condition, encoder_status)
     else:
         logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
+    return (encoder_md, encoder_ml, encoder_mh)
+
+
+def setup_loggers(mqtt_client: MQTT):
+    mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/log")
+    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    mqtt_handler.setFormatter(timestamp_formatter)
+    file_handler = FileHandler("logs")
+    file_handler.setFormatter(timestamp_formatter)
+    file_handler.setLevel(file_log_level)
+    logger_handlers_mapping = {
+        logger: [mqtt_handler, file_handler],
+        hw_logger: [mqtt_handler, file_handler],
+        test_logger: [mqtt_handler, file_handler],
+        vent_logger: [mqtt_handler, file_handler],
+        conn_logger: [file_handler, stream_handler],
+        mqtt_logger: [file_handler, stream_handler],
+        ha_logger: [mqtt_handler, stream_handler],
+    }
+    for lgr, handlers in logger_handlers_mapping.items():
+        for handler in handlers:
+            lgr.addHandler(handler)
+        lgr.setLevel(log_level)
+    mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
 
 
 if __name__ == "__main__":
@@ -144,83 +171,67 @@ if __name__ == "__main__":
     mqtt_topic = os.getenv("MQTT_TOPIC")
     command_topic = mqtt_topic + "/command"
 
-    def message_callback(client, topic, message):
+    def main_handler(message):
         global machine
+        if message == "test":
+            machine.set_state("test_motion")
+        elif message == "close":
+            machine.set_state("vent_closer")
+        elif message == "stop":
+            machine.set_state("idle")
+        elif message.startswith("set_vent"):
+            try:
+                value = float(message.split(" ")[1])
+                vent.update_from_hardware(hardware.read_raw_angle())
+                steps, direction, encoder_angle, revs = vent.move_to_position(value)
+                hardware.mock_move_to_raw_angle(encoder_angle)
+            except Exception as e:
+                logger.error("Invalid command: %s - %s", message, e)
+        elif message.startswith("open_vent"):
+            try: 
+                amount = float(message.split(" ")[1])
+            except:
+                amount = 0.1
+            vent.update_from_hardware(hardware.read_raw_angle())
+            steps, encoder_angle, revs = vent.open(amount)
+            hardware.mock_move_to_raw_angle(encoder_angle)
+        elif message.startswith("close_vent"):
+            try:
+                amount = float(message.split(" ")[1])
+            except:
+                amount = 0.1
+            vent.update_from_hardware(hardware.read_raw_angle())
+            steps, encoder_angle, revs = vent.close(amount)
+            hardware.mock_move_to_raw_angle(encoder_angle)
+        else:
+            logger.warning("Unknown command: %s", message)
+
+    # Map topic to callable
+    command_handlers = {
+        command_topic: main_handler
+    }
+    def message_callback(client, topic, message):
         # This method is called when a topic the client is subscribed to
         # has a new message.
-        if topic == command_topic:
-            if message == "test":
-                machine.set_state("test_motion")
-            elif message == "close":
-                machine.set_state("vent_closer")
-            elif message == "stop":
-                machine.set_state("idle")
-            elif message.startswith("set_vent"):
-                try:
-                    value = float(message.split(" ")[1])
-                    vent.update_from_hardware(hardware.read_raw_angle())
-                    steps, direction, encoder_angle, revs = vent.move_to_position(value)
-                    hardware.mock_move_to_raw_angle(encoder_angle)
-                except Exception as e:
-                    logger.error("Invalid command: %s - %s", message, e)
-            elif message.startswith("open_vent"):
-                try: 
-                    amount = float(message.split(" ")[1])
-                except:
-                    amount = 0.1
-                vent.update_from_hardware(hardware.read_raw_angle())
-                steps, encoder_angle, revs = vent.open(amount)
-                hardware.mock_move_to_raw_angle(encoder_angle)
-            elif message.startswith("close_vent"):
-                try:
-                    amount = float(message.split(" ")[1])
-                except:
-                    amount = 0.1
-                vent.update_from_hardware(hardware.read_raw_angle())
-                steps, encoder_angle, revs = vent.close(amount)
-                hardware.mock_move_to_raw_angle(encoder_angle)
-            else:
-                logger.warning("Unknown command: %s", message)
+        # logger.debug("topic %s received %s", topic, message)
+        if topic in command_handlers:
+            handler = command_handlers[topic]
+            # logger.debug("calling %s", handler)
+            handler(message)
         else:
-            logger.info("New message on topic %s: %s", topic, message)
+            logger.warning("Unhandled message on topic %s: %s", topic, message)
 
     # Initialize connection managers
     wifi_manager = WiFiConnectionManager()
     mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
     mqtt_conn_manager = MQTTConnectionManager(mqtt_client, wifi_manager)
 
-    # MQTT and file logging
-    mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/status")
-    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    mqtt_handler.setFormatter(timestamp_formatter)
-    logger.addHandler(mqtt_handler)
-    vent_logger.addHandler(mqtt_handler)
-    vent_logger.setLevel(log_level)
-    hw_logger.addHandler(mqtt_handler)
-    hw_logger.setLevel(log_level)
-    test_logger.addHandler(mqtt_handler)
-    test_logger.setLevel(log_level)
-    file_handler = FileHandler("logs")
-    file_handler.setFormatter(timestamp_formatter)
-    file_handler.setLevel(file_log_level)
-    logger.addHandler(file_handler)
-    vent_logger.addHandler(file_handler)
-    hw_logger.addHandler(file_handler)
-    test_logger.addHandler(file_handler)
-    conn_logger.addHandler(file_handler)
-    conn_logger.addHandler(stream_handler)
-    conn_logger.setLevel(log_level)
-    # MQTT client should log to file only
-    mqtt_logger = logging.getLogger("mqtt")
-    mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
-    mqtt_logger.addHandler(file_handler)
-    mqtt_logger.addHandler(stream_handler)
-    mqtt_client.logger = mqtt_logger
+    # Set up MQTT and file logging handlers
+    setup_loggers(mqtt_client)
 
     # Get the hardware interface
     hardware = get_hardware()
     hardware.led_on()
-    check_encoder(hardware)
     vent = create_vent_from_env()
     machine = init_state_machine(mqtt_client, hardware, vent)
 
@@ -233,6 +244,18 @@ if __name__ == "__main__":
     except MMQTTException as e:
         logger.error("Failed to connect to MQTT: %s", e)
 
+    # Integrate with Home Assistant
+    ha = HomeAssistant(machine, "burnie", wifi.radio.hostname)
+    discovery = ha.mqtt_discovery()
+    ha_handlers = ha.get_command_handlers()
+    for topic in ha_handlers:
+        logger.debug("subscribing to %s", topic)
+        mqtt_client.subscribe(topic)
+    command_handlers.update(ha_handlers)
+    mqtt_client.publish(discovery["topic"], discovery["message"])
+
+    encoder_status = check_encoder(hardware)
+    ha.send_encoder_status(*encoder_status)
     machine.set_state("idle")
     logger.info("Starting main loop")
 
@@ -252,6 +275,7 @@ if __name__ == "__main__":
         # Priority 3: Run state machine
         try:
             machine.update()
+            ha.update()
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
             # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler
