@@ -6,6 +6,10 @@ class State:
     def enter(self, machine):
         """Called when entering the state"""
         pass
+
+    def resume(self, machine):
+        """Called when resuming the state from the stack"""
+        self.enter(machine)
         
     def exit(self, machine):
         """Called when exiting the state"""
@@ -15,6 +19,13 @@ class State:
         """Called periodically to update the state"""
         pass
 
+    def handle_move_request(self, machine, target_position):
+        """
+        Handle a request to move the vent to a specific position.
+        Returns True if the request was accepted/handled, False otherwise.
+        """
+        return False
+
 
 class StateMachine:
      """Simple state machine implementation"""
@@ -22,6 +33,7 @@ class StateMachine:
          self.states = {}
          self.current_state = None
          self.previous_state = None
+         self.state_stack = []
          self.data = {}  # Shared data between states
          
          if initial_state:
@@ -34,6 +46,11 @@ class StateMachine:
          
      def set_state(self, state_name):
          """Change to a new state"""
+         self._transition(state_name)
+         self.states[self.current_state].enter(self)
+
+     def _transition(self, state_name):
+         """Perform state transition steps (exit current, update tracking)"""
          if state_name not in self.states:
              raise ValueError(f"State {state_name} does not exist")
              
@@ -45,9 +62,23 @@ class StateMachine:
          self.previous_state = self.current_state
          self.current_state = state_name
          
-         # Enter new state
-         self.states[self.current_state].enter(self)
+     def push_state(self, state_name):
+         """Push the current state to the stack and switch to a new state"""
+         if self.current_state:
+             self.state_stack.append(self.current_state)
+         self.set_state(state_name)
          
+     def pop_state(self):
+         """Pop the last state from the stack and switch to it"""
+         if self.state_stack:
+             prev_state = self.state_stack.pop()
+             self._transition(prev_state)
+             self.states[self.current_state].resume(self)
+         else:
+             # Fallback if stack is empty - perhaps stay or go to idle?
+             # For now, do nothing or maybe log warning
+             pass
+
      def update(self):
          """Update the current state"""
          if self.current_state:
@@ -79,4 +110,13 @@ class StateMachine:
              
      def get_state(self):
          """Get the current state name"""
-         return self.current_state 
+         return self.current_state
+
+     def handle_move_request(self, vent_position):
+         """
+         Attempt to handle a vent move request by delegating to the current state.
+         Returns True if accepted, False otherwise.
+         """
+         if self.current_state and self.current_state in self.states:
+             return self.states[self.current_state].handle_move_request(self, vent_position)
+         return False

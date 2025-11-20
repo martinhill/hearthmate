@@ -8,6 +8,7 @@ except ImportError:
     pass
 
 from state_machine import StateMachine
+from airvent import Vent, create_vent_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,18 @@ class HomeAssistant:
         self.discovery_prefix  = discovery_prefix
         self.device_name = device_name
         self.topic_prefix = topic_prefix
-        self.machine = machine
+        self.machine: StateMachine = machine
+        self.vent: Vent = machine.data["vent"]
         self.mqtt_client = machine.data["mqtt_client"]
-        self.last_rssi = 0
+        self.last_rssi = None
+        self.last_vent_position = None
+
+        # Use temporary Vent to determine the number of motor steps from open to closed
+        # so we can match this to the range for the Home Assistant Valve integration
+        temp_vent = create_vent_from_env()
+        temp_vent.update_from_hardware(temp_vent.open_position) # Fully open the valve
+        steps, angle_delta, revs = temp_vent.close(1.0) # Get steps to fully close
+        self.position_open = steps
 
     def mqtt_discovery(self) -> dict[str, str]:
         discovery_topic = f"{self.discovery_prefix}/device/{self.device_name}/config"
@@ -73,6 +83,7 @@ class HomeAssistant:
                     "p": "valve",
                     "unique_id": f"{self.device_name}_air_vent",
                     "reports_position": True,
+                    "position_open": self.position_open,
                     "~": f"{self.topic_prefix}/air_vent",
                     "state_topic": "~/state",
                     "command_topic": "~/set",
@@ -86,7 +97,19 @@ class HomeAssistant:
         return {"topic": discovery_topic, "message": discovery_json}
 
     def set_air_vent(self, message):
+        "Attempt to move the air vent to the requested position"
         logger.debug("set_air_vent: %s", message)
+        try:
+            vent_position = 1.0 - float(message)/self.position_open
+            vent_position = max(0.0, min(vent_position, 1.0))
+            
+            if self.machine.handle_move_request(vent_position):
+                logger.info("Set vent request accepted: vent_position=%.3f", vent_position)
+            else:
+                logger.warning("Set vent request rejected by state %s", self.machine.current_state)
+                
+        except ValueError as ve:
+            logger.error("set_air_vent: %s", ve)
 
     def get_command_handlers(self) -> dict[str, Callable[[str], None]]:
         "Provide the callbacks for MQTT command_topics"
@@ -114,3 +137,8 @@ class HomeAssistant:
     def update(self):
         "Update HA entities"
         self.send_rssi()
+        vent_position = self.vent.get_position()
+        if self.last_vent_position != vent_position:
+            ha_vent = str(round(self.position_open * (1 - vent_position)))
+            self.mqtt_client.publish(f"{self.topic_prefix}/air_vent/state", ha_vent)
+            self.last_vent_position = vent_position

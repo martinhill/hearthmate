@@ -12,6 +12,7 @@ from hw_test import TestMotion, logger as test_logger
 from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
+from vent_mover import MoveVentState, logger as vm_logger
 from logging import MQTTHandler, FileHandler
 from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
 from homeassistant import HomeAssistant, logger as ha_logger
@@ -41,6 +42,18 @@ class IdleState(State):
         hardware.motor.release()
         hardware.set_pixel_color((0,32,32)) # teal
         logger.info("Idle")
+
+    def resume(self, machine):
+        hardware = machine.data["hardware"]
+        hardware.motor.release()
+        if self.detected_fully_closed:
+            hardware.set_pixel_color((0x8f,0x8f,0)) # yellow
+        logger.info("resumed Idle")
+
+    def handle_move_request(self, machine, target_position):
+        machine.data["target_position"] = target_position
+        machine.push_state("move_vent")
+        return True
 
     def update(self, machine):
         machine.mqtt_loop()
@@ -125,6 +138,7 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.data["vent"] = vent
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
+    machine.add_state(MoveVentState())
     machine.add_state(VentCloser(LinearVentFunction(VENT_CLOSE_TIME)))
     return machine
 
@@ -158,6 +172,7 @@ def setup_loggers(mqtt_client: MQTT):
         conn_logger: [file_handler, stream_handler],
         mqtt_logger: [file_handler, stream_handler],
         ha_logger: [mqtt_handler, stream_handler],
+        vm_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
         for handler in handlers:

@@ -78,6 +78,13 @@ class Monitoring(State):
         logger.info("Monitoring: vent_position=%.3f", self.vent_position)
         hardware.set_pixel_blue()
 
+    def resume(self, machine):
+        "Update vent_position to prevent erroneous override detection"
+        hardware = machine.data["hardware"]
+        vent = machine.data["vent"]
+        vent.update_from_hardware(hardware.read_raw_angle())
+        self.vent_position = vent.get_position()
+
     def update(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
@@ -99,6 +106,9 @@ class Monitoring(State):
                 # Initiate motion
                 machine.set_state("closing")
 
+    def handle_move_request(self, machine, target_position):
+        "Always allow manual move requests while monitoring"
+        return True
 
 class Override(State):
     """Wait for externally-actuated motion to stop.
@@ -173,7 +183,6 @@ class Closing(State):
                 machine.set_state("monitoring")
 
 
-
 class Closed(State):
     """Final state reached after air vent is fully closed. On entry slams vent closed, 
     then waits until the air vent is moved to full open and resets function.
@@ -212,6 +221,14 @@ class Closed(State):
             func.start(vent_position)
             machine.set_state("monitoring")
 
+    def handle_move_request(self, machine, target_position):
+        "Always allow manual move requests while closed"
+        return True
+
+    def resume(self, machine):
+        "Do nothing..."
+        pass
+
 
 class VentCloser(State):
     """
@@ -227,6 +244,15 @@ class VentCloser(State):
         self.machine.add_state(Closed())
         self.machine.data["function"] = function
 
+    def handle_move_request(self, machine, target_position):
+        # Deligate to sub-states
+        if self.machine.handle_move_request(target_position):
+            # Allow interruption
+            machine.data["target_position"] = target_position
+            machine.push_state("move_vent")
+            return True
+        return False
+
     def enter(self, machine):
         for key in "vent", "hardware", "mqtt_client":
             self.machine.data[key] = machine.data[key]
@@ -234,10 +260,24 @@ class VentCloser(State):
         vent = machine.data['vent']
         vent.update_from_hardware(hardware.read_raw_angle())
         function = self.machine.data["function"]
+        
+        # Normal start
         function.start(vent.get_position())
 
         self.machine.set_state("monitoring")
         logger.info("%s entered", self.name)
+
+    def resume(self, machine):
+        "Resume current sub-state after adjusting function for new position"
+        hardware = machine.data["hardware"]
+        vent = machine.data['vent']
+        vent.update_from_hardware(hardware.read_raw_angle())
+        function = self.machine.data["function"]
+        
+        # Resuming logic: Adjust function to current position
+        function.adjust(vent.get_position())
+        self.machine.states[self.machine.current_state].resume(self.machine)
+        logger.info("%s resumed", self.name)
 
     def exit(self, machine):
         logger.info("exit %s", self.name)
