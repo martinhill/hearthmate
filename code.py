@@ -41,6 +41,7 @@ class IdleState(State):
         hardware = machine.data["hardware"]
         hardware.motor.release()
         hardware.set_pixel_color((0,32,32)) # teal
+        machine.data['mqtt_client'].publish(f"{mqtt_topic}/state", "Idle")
         logger.info("Idle")
 
     def resume(self, machine):
@@ -190,9 +191,9 @@ if __name__ == "__main__":
         global machine
         if message == "test":
             machine.set_state("test_motion")
-        elif message == "close":
+        elif message == "close" or message == "vent_closer":
             machine.set_state("vent_closer")
-        elif message == "stop":
+        elif message == "stop" or message == "idle":
             machine.set_state("idle")
         elif message.startswith("set_vent"):
             try:

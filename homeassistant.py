@@ -24,7 +24,7 @@ class HomeAssistant:
         self.vent: Vent = machine.data["vent"]
         self.mqtt_client = machine.data["mqtt_client"]
         self.last_rssi = None
-        self.last_vent_position = None
+        self.saved_values = {}
 
         # Use temporary Vent to determine the number of motor steps from open to closed
         # so we can match this to the range for the Home Assistant Valve integration
@@ -102,7 +102,35 @@ class HomeAssistant:
                     "avty": [
                         { "topic": f"{self.topic_prefix}/status"},
                     ],
-                }
+                },
+                "operating_state": {
+                    "name": "State Machine",
+                    "p": "select",
+                    "unique_id": f"{self.device_name}_state",
+                    "command_topic": f"{self.topic_prefix}/command",
+                    "state_topic": f"{self.topic_prefix}/state",
+                    "options": [
+                        "idle",
+                        "vent_closer",
+                    ],
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "closing_duration": {
+                    "name": "Closing Duration",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_duration",
+                    "command_topic": f"{self.topic_prefix}/duration/set",
+                    "state_topic": f"{self.topic_prefix}/duration/state",
+                    "device_class": "duration",
+                    "unit_of_measurement": "minutes",
+                    "min": 5,
+                    "max": 120,
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
             },
             "qos": 0
         }
@@ -133,10 +161,19 @@ class HomeAssistant:
         except ValueError as ve:
             logger.error("set_air_vent: %s", ve)
 
+    def set_duration(self, message):
+        try:
+            function = self.machine.states["vent_closer"].machine.data["function"]
+            function.time_range = int(message) * 60
+            logger.info("Set closing duration to %d seconds", function.time_range)
+        except Exception as e:
+            logger.error("set_duration: %s", e)
+
     def get_command_handlers(self) -> dict[str, Callable[[str], None]]:
         "Provide the callbacks for MQTT command_topics"
         return {
             f"{self.topic_prefix}/air_vent/set": self.set_air_vent,
+            f"{self.topic_prefix}/duration/set": self.set_duration,
             f"{self.discovery_prefix}/status": self.ha_status,
         }
 
@@ -148,20 +185,29 @@ class HomeAssistant:
         self.mqtt_client.publish(f"{self.topic_prefix}/encoder_ml/state", state_string(status_ml))
         self.mqtt_client.publish(f"{self.topic_prefix}/encoder_mh/state", state_string(status_mh))
 
-    def send_rssi(self):
-        try:
-            rssi = wifi.radio.ap_info.rssi
-            if self.last_rssi != rssi:
-                self.mqtt_client.publish(f"{self.topic_prefix}/rssi/state", str(rssi))
-                self.last_rssi = rssi
-        except Exception as e:
-            logger.error("send_rssi: %s", e)
+    def update_mqtt_state(self, topic, value):
+        "Send a single state update on a topic only if it changed since last"
+        if self.saved_values.get(topic) != value:
+            self.mqtt_client.publish(f"{self.topic_prefix}/{topic}", str(value))
+            self.saved_values[topic] = value
 
     def update(self):
         "Update HA entities"
-        self.send_rssi()
+        try:
+            rssi = wifi.radio.ap_info.rssi
+            self.update_mqtt_state("rssi/state", rssi)
+        except Exception as e:
+            logger.error("sending rssi: %s", e)
         vent_position = self.vent.get_position()
         ha_vent = str(round(self.position_open * (1 - vent_position)))
-        if self.last_vent_position != ha_vent:
-            self.mqtt_client.publish(f"{self.topic_prefix}/air_vent/state", ha_vent)
-            self.last_vent_position = ha_vent
+        self.update_mqtt_state("air_vent/state", ha_vent)
+        self.update_mqtt_state("state", self.machine.current_state)
+
+        # kludge alert
+        vent_closer = self.machine.states.get("vent_closer")
+        if vent_closer:
+            function = vent_closer.machine.data.get("function")
+            if function:
+                duration = int(function.time_range / 60)
+                self.update_mqtt_state("duration/state", duration)
+
