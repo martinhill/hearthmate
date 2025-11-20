@@ -96,7 +96,7 @@ def init_mqtt_client(
     mqtt_user=os.getenv('MQTT_USER'),
     mqtt_password=os.getenv('MQTT_PASSWORD'),
     command_topic=None
-):
+) -> MQTT:
     # Create a socket pool
     pool = socketpool.SocketPool(wifi.radio)
     ssl_context = ssl.create_default_context()
@@ -238,7 +238,7 @@ if __name__ == "__main__":
 
     # Initialize connection managers
     wifi_manager = WiFiConnectionManager()
-    mqtt_client = init_mqtt_client(message_callback, command_topic=command_topic)
+    mqtt_client: MQTT = init_mqtt_client(message_callback, command_topic=command_topic)
     mqtt_conn_manager = MQTTConnectionManager(mqtt_client, wifi_manager)
 
     # Set up MQTT and file logging handlers
@@ -253,14 +253,14 @@ if __name__ == "__main__":
     # Attempt initial MQTT connection
     try:
         logger.info("Connecting to MQTT...")
+        mqtt_client.will_set(mqtt_topic + "/status", "offline")
         mqtt_client.connect()
-        mqtt_client.publish(mqtt_topic + "/status", "Hello, world!")
         hardware.led_off()
     except MMQTTException as e:
         logger.error("Failed to connect to MQTT: %s", e)
 
     # Integrate with Home Assistant
-    ha = HomeAssistant(machine, "burnie", wifi.radio.hostname)
+    ha = HomeAssistant(machine, mqtt_topic, wifi.radio.hostname)
     discovery = ha.mqtt_discovery()
     ha_handlers = ha.get_command_handlers()
     for topic in ha_handlers:
@@ -268,6 +268,7 @@ if __name__ == "__main__":
         mqtt_client.subscribe(topic)
     command_handlers.update(ha_handlers)
     mqtt_client.publish(discovery["topic"], discovery["message"])
+    mqtt_client.publish(mqtt_topic + "/status", "online")
 
     encoder_status = check_encoder(hardware)
     ha.send_encoder_status(*encoder_status)

@@ -39,7 +39,7 @@ class HomeAssistant:
         discovery_dict = {
             "dev": {
                 "ids": self.device_name,
-                "name": "Burnie"
+                "name": "Burnie",
             },
             "o": {
                 "name": "Burnie",
@@ -50,33 +50,45 @@ class HomeAssistant:
                     "p": "sensor",
                     "device_class": "signal_strength",
                     "unit_of_measurement": "dBm",
-                    "entity_category": "diagnostic",
+                    "ent_cat": "diagnostic",
                     "unique_id": f"{self.device_name}_rssi",
                     "state_topic": f"{self.topic_prefix}/rssi/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
                 },
                 "encoder_magnet_detected": {
                     "name": "AS5600 magnet detected",
                     "p": "binary_sensor",
-                    "entity_category": "diagnostic",
+                    "ent_cat": "diagnostic",
                     "unique_id": f"{self.device_name}_encoder_md",
                     "state_topic": f"{self.topic_prefix}/encoder_md/state",
                     "icon": "mdi:magnet",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
                 },
                 "encoder_magnet_weak": {
                     "name": "AS5600 magnet weak",
                     "p": "binary_sensor",
-                    "entity_category": "diagnostic",
+                    "ent_cat": "diagnostic",
                     "unique_id": f"{self.device_name}_encoder_ml",
                     "state_topic": f"{self.topic_prefix}/encoder_ml/state",
                     "icon": "mdi:magnet",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
                 },
                 "encoder_magnet_strong": {
                     "name": "AS5600 magnet strong",
                     "p": "binary_sensor",
-                    "entity_category": "diagnostic",
+                    "ent_cat": "diagnostic",
                     "unique_id": f"{self.device_name}_encoder_mh",
                     "state_topic": f"{self.topic_prefix}/encoder_mh/state",
                     "icon": "mdi:magnet",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
                 },
                 "air_vent": {
                     "name": "Air Vent",
@@ -87,6 +99,9 @@ class HomeAssistant:
                     "~": f"{self.topic_prefix}/air_vent",
                     "state_topic": "~/state",
                     "command_topic": "~/set",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
                 }
             },
             "qos": 0
@@ -95,6 +110,13 @@ class HomeAssistant:
         discovery_json = json.dumps(discovery_dict)
 
         return {"topic": discovery_topic, "message": discovery_json}
+
+    def ha_status(self, message):
+        if message == "online":
+            # Resend discovery
+            discovery = self.mqtt_discovery()
+            self.mqtt_client.publish(discovery["topic"], discovery["message"])
+            self.mqtt_client.publish(self.topic_prefix + "/status", "online")
 
     def set_air_vent(self, message):
         "Attempt to move the air vent to the requested position"
@@ -115,6 +137,7 @@ class HomeAssistant:
         "Provide the callbacks for MQTT command_topics"
         return {
             f"{self.topic_prefix}/air_vent/set": self.set_air_vent,
+            f"{self.discovery_prefix}/status": self.ha_status,
         }
 
     def send_encoder_status(self, status_md, status_ml, status_mh):
@@ -138,7 +161,7 @@ class HomeAssistant:
         "Update HA entities"
         self.send_rssi()
         vent_position = self.vent.get_position()
-        if self.last_vent_position != vent_position:
-            ha_vent = str(round(self.position_open * (1 - vent_position)))
+        ha_vent = str(round(self.position_open * (1 - vent_position)))
+        if self.last_vent_position != ha_vent:
             self.mqtt_client.publish(f"{self.topic_prefix}/air_vent/state", ha_vent)
-            self.last_vent_position = vent_position
+            self.last_vent_position = ha_vent
