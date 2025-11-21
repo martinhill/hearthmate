@@ -91,12 +91,14 @@ class Calibrate(State):
         hardware = machine.data["hardware"]
 
 
+mqtt_topic = os.getenv("MQTT_TOPIC")
+command_topic = mqtt_topic + "/command"
+
 def init_mqtt_client(
     message_callback,
     mqtt_host=os.getenv('MQTT_HOST'),
     mqtt_user=os.getenv('MQTT_USER'),
     mqtt_password=os.getenv('MQTT_PASSWORD'),
-    command_topic=None
 ) -> MQTT:
     # Create a socket pool
     pool = socketpool.SocketPool(wifi.radio)
@@ -157,7 +159,6 @@ def check_encoder(hardware):
         logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
     return (encoder_md, encoder_ml, encoder_mh)
 
-
 def setup_loggers(mqtt_client: MQTT):
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/log")
     timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -184,10 +185,7 @@ def setup_loggers(mqtt_client: MQTT):
 
 if __name__ == "__main__":
 
-    mqtt_topic = os.getenv("MQTT_TOPIC")
-    command_topic = mqtt_topic + "/command"
-
-    def main_handler(message):
+    def command_handler(message):
         global machine
         if message == "test":
             machine.set_state("test_motion")
@@ -195,43 +193,19 @@ if __name__ == "__main__":
             machine.set_state("vent_closer")
         elif message == "stop" or message == "idle":
             machine.set_state("idle")
-        elif message.startswith("set_vent"):
-            try:
-                value = float(message.split(" ")[1])
-                vent.update_from_hardware(hardware.read_raw_angle())
-                steps, direction, encoder_angle, revs = vent.move_to_position(value)
-                hardware.mock_move_to_raw_angle(encoder_angle)
-            except Exception as e:
-                logger.error("Invalid command: %s - %s", message, e)
-        elif message.startswith("open_vent"):
-            try: 
-                amount = float(message.split(" ")[1])
-            except:
-                amount = 0.1
-            vent.update_from_hardware(hardware.read_raw_angle())
-            steps, encoder_angle, revs = vent.open(amount)
-            hardware.mock_move_to_raw_angle(encoder_angle)
-        elif message.startswith("close_vent"):
-            try:
-                amount = float(message.split(" ")[1])
-            except:
-                amount = 0.1
-            vent.update_from_hardware(hardware.read_raw_angle())
-            steps, encoder_angle, revs = vent.close(amount)
-            hardware.mock_move_to_raw_angle(encoder_angle)
         else:
             logger.warning("Unknown command: %s", message)
 
     # Map topic to callable
-    command_handlers = {
-        command_topic: main_handler
+    mqtt_message_handlers = {
+        command_topic: command_handler
     }
     def message_callback(client, topic, message):
         # This method is called when a topic the client is subscribed to
         # has a new message.
         # logger.debug("topic %s received %s", topic, message)
-        if topic in command_handlers:
-            handler = command_handlers[topic]
+        if topic in mqtt_message_handlers:
+            handler = mqtt_message_handlers[topic]
             # logger.debug("calling %s", handler)
             handler(message)
         else:
@@ -239,7 +213,7 @@ if __name__ == "__main__":
 
     # Initialize connection managers
     wifi_manager = WiFiConnectionManager()
-    mqtt_client: MQTT = init_mqtt_client(message_callback, command_topic=command_topic)
+    mqtt_client: MQTT = init_mqtt_client(message_callback)
     mqtt_conn_manager = MQTTConnectionManager(mqtt_client, wifi_manager)
 
     # Set up MQTT and file logging handlers
@@ -267,7 +241,7 @@ if __name__ == "__main__":
     for topic in ha_handlers:
         logger.debug("subscribing to %s", topic)
         mqtt_client.subscribe(topic)
-    command_handlers.update(ha_handlers)
+    mqtt_message_handlers.update(ha_handlers)
     mqtt_client.publish(discovery["topic"], discovery["message"])
     mqtt_client.publish(mqtt_topic + "/status", "online")
 
