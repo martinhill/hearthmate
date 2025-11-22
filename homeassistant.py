@@ -16,7 +16,7 @@ discovery_prefix_default = os.getenv("HA_DISCOVERY_PREFIX", "homeassistant")
 
 class HomeAssistant:
 
-    def __init__(self, machine: StateMachine, topic_prefix: str, device_name: str, discovery_prefix: str = discovery_prefix_default):
+    def __init__(self, machine: StateMachine, topic_prefix: str, device_name: str, discovery_prefix: str = discovery_prefix_default, closed_threshold=3):
         self.discovery_prefix  = discovery_prefix
         self.device_name = device_name
         self.topic_prefix = topic_prefix
@@ -25,6 +25,7 @@ class HomeAssistant:
         self.mqtt_client = machine.data["mqtt_client"]
         self.last_rssi = None
         self.saved_values = {}
+        self.closed_threshold = closed_threshold
 
         # Use temporary Vent to determine the number of motor steps from open to closed
         # so we can match this to the range for the Home Assistant Valve integration
@@ -198,9 +199,14 @@ class HomeAssistant:
             self.update_mqtt_state("rssi/state", rssi)
         except Exception as e:
             logger.error("sending rssi: %s", e)
+
         vent_position = self.vent.get_position()
-        ha_vent = str(round(self.position_open * (1 - vent_position)))
-        self.update_mqtt_state("air_vent/state", ha_vent)
+        ha_vent = min(self.position_open, max(round(self.position_open * (1 - vent_position)), 0))
+        # Adjust vent position so almost closed appears closed
+        if ha_vent < self.closed_threshold:
+            ha_vent = 0
+
+        self.update_mqtt_state("air_vent/state", str(ha_vent))
         self.update_mqtt_state("state", self.machine.current_state)
 
         # kludge alert
