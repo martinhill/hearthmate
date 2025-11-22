@@ -33,15 +33,17 @@ class IdleState(State):
     If vent movement to fully closed position is detected, and then fully open,
     the state machine will transition to "vent_closer" state.
     """
-    def __init__(self):
+    def __init__(self, sensitivity = 0.001):
         super().__init__("idle")
         self.detected_fully_closed = False
+        self.sensitivity = sensitivity
 
     def enter(self, machine):
         hardware = machine.data["hardware"]
         hardware.motor.release()
         hardware.set_pixel_color((0,32,32)) # teal
-        machine.data['mqtt_client'].publish(f"{mqtt_topic}/state", "Idle")
+        vent.update_from_hardware(hardware.read_raw_angle())
+        self.last_position = vent.get_position()
         logger.info("Idle")
 
     def resume(self, machine):
@@ -57,17 +59,20 @@ class IdleState(State):
         return True
 
     def update(self, machine):
-        machine.mqtt_loop()
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
         vent.update_from_hardware(hardware.read_raw_angle())
-        position = vent.get_position()
-        if  position > 0.99 and not self.detected_fully_closed:
+        vent_position = vent.get_position()
+        # Check MQTT when vent position is stable
+        if abs(vent_position - self.last_position) < self.sensitivity:
+            machine.mqtt_loop()
+        self.last_position = vent_position
+        if  vent_position > 0.99 and not self.detected_fully_closed:
             # first detection of vent closed
             self.detected_fully_closed = True
             hardware.set_pixel_color((0x8f,0x8f,0)) # yellow
             logger.info("Detected vent closed")
-        elif position < 0.01 and self.detected_fully_closed:
+        elif vent_position < 0.01 and self.detected_fully_closed:
             # detected vent fully open after closed position - transition
             logger.info("Detected vent open - engaging automatic vent closer")
             machine.set_state("vent_closer")
@@ -261,6 +266,8 @@ if __name__ == "__main__":
         # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
         if mqtt_conn_manager.attempt_reconnect(current_time, mqtt_exception_raised):
             hardware.led_off()
+            if mqtt_exception_raised:
+                mqtt_client.publish(mqtt_topic + "/status", "online")
             mqtt_exception_raised = False
 
         # Priority 3: Run state machine
