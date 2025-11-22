@@ -55,6 +55,8 @@ class Vent:
     def update_from_hardware(self, current_angle):
         """
         Update the current state (current_revolution and last_angle) from the encoder raw angle position.
+        This method should be called frequently enough to track the position, as jumps in position greater
+        than 1/4 revolution can result in missed revolution (zero-crossing) detection.
         """
         # Initialize last_angle on first call
         if self.last_angle is None:
@@ -68,6 +70,18 @@ class Vent:
         elif current_angle > ENCODER_FOURTH_QUADRANT_START and self.last_angle < ENCODER_FIRST_QUADRANT_END:
             # Crossing from first quadrant to fourth quadrant (clockwise)
             self.current_revolution -= 1
+
+        # Bounds check
+        self.current_revolution = max(0, min(self.current_revolution, self.num_zero_crossings))
+
+        # Sanity check in case incorrect current_revolution value results in invalid position calculation.
+        # This could happen if update_from_hardware is not called often enough while the vent control moves
+        # more than 1/4 revolution.
+        position_sanity_check = self.get_position(current_angle)
+        if position_sanity_check < -0.05 and self.current_revolution < 1:
+            self.current_revolution = 1
+        elif position_sanity_check > 1.05 and self.current_revolution < self.num_zero_crossings:
+            self.current_revolution = 0
         self.last_angle = current_angle
 
     def get_position(self, current_angle=None):
