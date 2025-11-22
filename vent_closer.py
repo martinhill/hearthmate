@@ -153,10 +153,11 @@ class Closing(State):
     """Close the air vent by the amount needed.
     """
 
-    def __init__(self, min_steps = 5, overshoot = 2):
+    def __init__(self, min_steps = 5, overshoot = 2, closed_threshold = 0.999):
         super().__init__("closing")
         self.min_steps = min_steps
         self.overshoot = overshoot # extra steps to counter mechanical friction and compliance
+        self.closed_threshold = closed_threshold
 
     def enter(self, machine):
         hardware = machine.data["hardware"]
@@ -168,19 +169,19 @@ class Closing(State):
     def update(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
-        vent.update_from_hardware(hardware.read_raw_angle())
-        steps, direction, encoder, revs = vent.move_to_position(self.ideal_position)
-        logger.debug("ideal_position=%.3f, steps=%d, direction=%d", self.ideal_position, steps, direction)
-        if steps > self.min_steps:
-            if direction:
-                hardware.open_vent(steps + self.overshoot)
-            else:
-                hardware.close_vent(steps + self.overshoot)
-        else:
-            if self.ideal_position > 0.999:
-                machine.set_state("closed")
+        if self.ideal_position < self.closed_threshold:
+            vent.update_from_hardware(hardware.read_raw_angle())
+            steps, direction, encoder, revs = vent.move_to_position(self.ideal_position)
+            logger.debug("ideal_position=%.3f, steps=%d, direction=%d", self.ideal_position, steps, direction)
+            if steps > self.min_steps:
+                if direction:
+                    hardware.open_vent(steps + self.overshoot)
+                else:
+                    hardware.close_vent(steps + self.overshoot)
             else:
                 machine.set_state("monitoring")
+        else:
+            machine.set_state("closed")
 
 
 class Closed(State):
@@ -188,9 +189,11 @@ class Closed(State):
     then waits until the air vent is moved to full open and resets function.
     """
 
-    def __init__(self, open_position_threshold = 0.1):
+    def __init__(self, open_position_threshold = 0.1, extra_steps = 2, sensitivity = 0.001):
         super().__init__("closed")
         self.open_position_threshold = open_position_threshold
+        self.extra_steps = extra_steps
+        self.sensitivity = sensitivity
 
     def enter(self, machine):
         hardware = machine.data["hardware"]
@@ -200,7 +203,7 @@ class Closed(State):
         vent.update_from_hardware(hardware.read_raw_angle())
         steps, direction, encoder, revs = vent.move_to_position(1.0)
         # brute force
-        hardware.close_vent(steps+3)
+        hardware.close_vent(steps + self.extra_steps)
         self.last_position = 1.0
         logger.info("Closed")
 
@@ -208,10 +211,12 @@ class Closed(State):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
 
-        machine.mqtt_loop()
-
         vent.update_from_hardware(hardware.read_raw_angle())
         vent_position = vent.get_position()
+        # Check MQTT when vent position is stable
+        if abs(vent_position - self.last_position) < self.sensitivity:
+            machine.mqtt_loop()
+        self.last_position = vent_position
         if abs(vent_position - self.last_position) > 0.01:
             # Log movements
             logger.debug("Closed: vent_position=%.3f", vent_position)
