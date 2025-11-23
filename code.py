@@ -268,6 +268,7 @@ if __name__ == "__main__":
             hardware.led_off()
             if mqtt_exception_raised:
                 mqtt_client.publish(mqtt_topic + "/status", "online")
+                ha.clear_cached_state()
             mqtt_exception_raised = False
 
         # Priority 3: Run state machine

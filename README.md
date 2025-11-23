@@ -22,7 +22,8 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 ## TODO
 
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
-- Sanity check in airvent.Vent to handle missed encoder zero crossing and update current_revolution
+- Ennumeration for direction in Vent class
+- Throttle/average RSSI
 - Add HA diagnostic entity to track motor step slippage % over movement from open->closed: 
         (steps_needed - actual_steps) / steps_needed
 - type annotations

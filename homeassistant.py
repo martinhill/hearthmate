@@ -186,6 +186,9 @@ class HomeAssistant:
         self.mqtt_client.publish(f"{self.topic_prefix}/encoder_ml/state", state_string(status_ml))
         self.mqtt_client.publish(f"{self.topic_prefix}/encoder_mh/state", state_string(status_mh))
 
+    def clear_cached_state(self):
+        self.saved_values.clear()
+
     def update_mqtt_state(self, topic, value):
         "Send a single state update on a topic only if it changed since last"
         if self.saved_values.get(topic) != value:
