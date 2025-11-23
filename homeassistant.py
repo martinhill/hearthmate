@@ -132,6 +132,17 @@ class HomeAssistant:
                         { "topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "tmp36": {
+                    "name": "TMP36",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_tmp36",
+                    "state_topic": f"{self.topic_prefix}/tmp36/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
             },
             "qos": 0
         }
@@ -209,8 +220,10 @@ class HomeAssistant:
         if ha_vent < self.closed_threshold:
             ha_vent = 0
 
+        hardware = self.machine.data["hardware"]
         self.update_mqtt_state("air_vent/state", str(ha_vent))
         self.update_mqtt_state("state", self.machine.current_state)
+        self.update_mqtt_state("tmp36/state", hardware.tmp36_temperature_C())
 
         # kludge alert
         vent_closer = self.machine.states.get("vent_closer")

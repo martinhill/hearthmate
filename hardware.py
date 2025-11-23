@@ -3,6 +3,7 @@ import os
 import board
 import neopixel
 import digitalio
+import analogio
 from adafruit_motor import stepper
 from adafruit_motorkit import MotorKit
 from adafruit_bus_device.i2c_device import I2CDevice
@@ -10,6 +11,7 @@ import adafruit_logging as logging
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
 
 
 class Hardware:
@@ -23,6 +25,7 @@ class Hardware:
         self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)
         self.led = digitalio.DigitalInOut(board.LED)
         self.led.direction = digitalio.Direction.OUTPUT
+        self.tmp36 = analogio.AnalogIn(board.A2)
 
     def read_encoder_status(self):
         status_buf = bytearray(1)
@@ -42,6 +45,10 @@ class Hardware:
             self.as5600.readinto(raw_angle_high)
 
         return raw_angle_high[0] << 8 | raw_angle_low[0]
+
+    def tmp36_temperature_C(self):
+        millivolts = self.tmp36.value * (self.tmp36.reference_voltage * 1000 / 65535)
+        return (millivolts - 500) / 10
 
     def _move(self, direction, steps, delay=0.05):
         for i in range(steps):
@@ -142,6 +149,9 @@ class MockHardware(Hardware):
         # Convert current angle to raw encoder value (4096 values for 360 degrees)
         raw_value = int((self.current_angle % 360) * 4096 / 360) + self.open_position
         return raw_value
+
+    def tmp36_temperature_C(self):
+        return 30.0
 
     def mock_move_to_angle(self, angle):
         self.current_angle = angle
