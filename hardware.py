@@ -15,6 +15,8 @@ logger.setLevel(logging.INFO)
 
 
 class Hardware:
+
+    is_mock = False
     
     def __init__(self, i2c):
         self.i2c = i2c
@@ -124,6 +126,9 @@ class MockHardware(Hardware):
     Mock implementation of Hardware class that simulates encoder values
     based on motor steps. Each step is assumed to be 1.8 degrees.
     """
+
+    is_mock = True
+
     def __init__(self, i2c):
         self.i2c = i2c
         self.kit = MotorKit(i2c=self.i2c)

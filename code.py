@@ -16,8 +16,10 @@ from vent_mover import MoveVentState, logger as vm_logger
 from logging import MQTTHandler, FileHandler
 from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
 from homeassistant import HomeAssistant, logger as ha_logger
+from thermal_camera import get_thermal_camera, logger as cam_logger
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
+THERMAL_CAMERA_INTERVAL = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
 
 logger = logging.getLogger(__name__)
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
@@ -180,6 +182,7 @@ def setup_loggers(mqtt_client: MQTT):
         mqtt_logger: [file_handler, stream_handler],
         ha_logger: [mqtt_handler, stream_handler],
         vm_logger: [mqtt_handler, file_handler],
+        cam_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
         for handler in handlers:
@@ -229,6 +232,10 @@ if __name__ == "__main__":
     hardware.led_on()
     vent = create_vent_from_env()
     machine = init_state_machine(mqtt_client, hardware, vent)
+    
+    # Initialize thermal camera
+    thermal_camera = get_thermal_camera(hardware.i2c)
+    last_camera_update = 0
 
     # Attempt initial MQTT connection
     try:
@@ -275,6 +282,24 @@ if __name__ == "__main__":
         try:
             machine.update()
             ha.update()
+            
+            # Priority 4: Update thermal camera at configured interval
+            if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
+                frame = thermal_camera.capture_frame()
+                if frame:
+                    base64_image = thermal_camera.get_base64_image(frame)
+                    ha.update_thermal_camera(base64_image)
+                    
+                    # Calculate and publish temperature statistics
+                    stats = thermal_camera.get_temperature_statistics(frame)
+                    ha.update_thermal_statistics(stats)
+                    # logger.debug(
+                    #     "Thermal: min=%.1fC max=%.1fC mean=%.1fC median=%.1fC mode=%.1fC",
+                    #     stats['min'], stats['max'], stats['mean'], 
+                    #     stats['median'], stats['mode']
+                    # )
+                last_camera_update = current_time
+                
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
             # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler

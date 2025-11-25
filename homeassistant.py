@@ -143,6 +143,71 @@ class HomeAssistant:
                         { "topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "thermal_camera": {
+                    "name": "Thermal Camera",
+                    "p": "camera",
+                    "unique_id": f"{self.device_name}_thermal_camera",
+                    "topic": f"{self.topic_prefix}/thermal_camera",
+                    "image_encoding": "b64",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_temp_min": {
+                    "name": "Thermal Min Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_thermal_temp_min",
+                    "state_topic": f"{self.topic_prefix}/thermal/min/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_temp_max": {
+                    "name": "Thermal Max Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_thermal_temp_max",
+                    "state_topic": f"{self.topic_prefix}/thermal/max/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_temp_mean": {
+                    "name": "Thermal Mean Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_thermal_temp_mean",
+                    "state_topic": f"{self.topic_prefix}/thermal/mean/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_temp_median": {
+                    "name": "Thermal Median Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_thermal_temp_median",
+                    "state_topic": f"{self.topic_prefix}/thermal/median/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_temp_mode": {
+                    "name": "Thermal Mode Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_measurement": "°C",
+                    "unique_id": f"{self.device_name}_thermal_temp_mode",
+                    "state_topic": f"{self.topic_prefix}/thermal/mode/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
             },
             "qos": 0
         }
@@ -206,6 +271,37 @@ class HomeAssistant:
             self.mqtt_client.publish(f"{self.topic_prefix}/{topic}", str(value))
             self.saved_values[topic] = value
 
+    def update_thermal_camera(self, base64_image):
+        """
+        Publish thermal camera image to Home Assistant via MQTT.
+        
+        Args:
+            base64_image: Base64-encoded image data
+        """
+        try:
+            self.mqtt_client.publish(
+                f"{self.topic_prefix}/thermal_camera", 
+                base64_image
+            )
+        except Exception as e:
+            logger.error("Failed to publish thermal camera image: %s", e)
+    
+    def update_thermal_statistics(self, stats):
+        """
+        Publish thermal camera temperature statistics to Home Assistant via MQTT.
+        
+        Args:
+            stats: Dictionary with keys: min, max, mean, median, mode
+        """
+        try:
+            self.update_mqtt_state("thermal/min/state", f"{stats['min']:.1f}")
+            self.update_mqtt_state("thermal/max/state", f"{stats['max']:.1f}")
+            self.update_mqtt_state("thermal/mean/state", f"{stats['mean']:.1f}")
+            self.update_mqtt_state("thermal/median/state", f"{stats['median']:.1f}")
+            self.update_mqtt_state("thermal/mode/state", f"{stats['mode']:.1f}")
+        except Exception as e:
+            logger.error("Failed to publish thermal statistics: %s", e)
+
     def update(self):
         "Update HA entities"
         try:
@@ -223,7 +319,8 @@ class HomeAssistant:
         hardware = self.machine.data["hardware"]
         self.update_mqtt_state("air_vent/state", str(ha_vent))
         self.update_mqtt_state("state", self.machine.current_state)
-        self.update_mqtt_state("tmp36/state", hardware.tmp36_temperature_C())
+        if not hardware.is_mock:
+            self.update_mqtt_state("tmp36/state", hardware.tmp36_temperature_C())
 
         # kludge alert
         vent_closer = self.machine.states.get("vent_closer")

@@ -6,4 +6,5 @@ adafruit_connection_manager
 adafruit_pca9685
 adafruit_ticks
 adafruit_minimqtt
+adafruit_mlx90640
 neopixel
