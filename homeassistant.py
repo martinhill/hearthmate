@@ -23,9 +23,9 @@ class HomeAssistant:
         self.machine: StateMachine = machine
         self.vent: Vent = machine.data["vent"]
         self.mqtt_client = machine.data["mqtt_client"]
-        self.last_rssi = None
         self.saved_values = {}
         self.closed_threshold = closed_threshold
+        self.last_thermal_stats = None
 
         # Use temporary Vent to determine the number of motor steps from open to closed
         # so we can match this to the range for the Home Assistant Valve integration
@@ -197,17 +197,6 @@ class HomeAssistant:
                         { "topic": f"{self.topic_prefix}/status"},
                     ],
                 },
-                "thermal_temp_mode": {
-                    "name": "Thermal Mode Temperature",
-                    "p": "sensor",
-                    "device_class": "temperature",
-                    "unit_of_measurement": "°C",
-                    "unique_id": f"{self.device_name}_thermal_temp_mode",
-                    "state_topic": f"{self.topic_prefix}/thermal/mode/state",
-                    "avty": [
-                        { "topic": f"{self.topic_prefix}/status"},
-                    ],
-                },
             },
             "qos": 0
         }
@@ -286,19 +275,51 @@ class HomeAssistant:
         except Exception as e:
             logger.error("Failed to publish thermal camera image: %s", e)
     
+    def validate_thermal_stats(self, stats, max_change):
+        """
+        Validate thermal statistics against previous reading to detect erroneous data.
+        
+        Args:
+            stats: Dictionary with keys: min, max, mean, median
+            max_change: Maximum allowed change in degrees C for any statistic
+            
+        Returns:
+            bool: True if stats are valid, False if they should be discarded
+        """
+        if self.last_thermal_stats is None:
+            # First reading - accept it
+            self.last_thermal_stats = stats
+            return True
+        
+        # Check each statistic for excessive change
+        for key in ['min', 'max', 'mean', 'median']:
+            change = abs(stats[key] - self.last_thermal_stats[key])
+            if change > max_change:
+                logger.warning(
+                    "Thermal stats discarded: %s changed by %.1fC (threshold: %.1fC) - "
+                    "min=%.1fC max=%.1fC mean=%.1fC median=%.1fC",
+                    key, change, max_change,
+                    stats['min'], stats['max'], stats['mean'], 
+                    stats['median'],
+                )
+                return False
+        
+        # All stats within threshold - accept and update last reading
+        self.last_thermal_stats = stats
+        return True
+    
     def update_thermal_statistics(self, stats):
         """
         Publish thermal camera temperature statistics to Home Assistant via MQTT.
         
         Args:
-            stats: Dictionary with keys: min, max, mean, median, mode
+            stats: Dictionary with keys: min, max, mean, median
         """
         try:
             self.update_mqtt_state("thermal/min/state", f"{stats['min']:.1f}")
             self.update_mqtt_state("thermal/max/state", f"{stats['max']:.1f}")
             self.update_mqtt_state("thermal/mean/state", f"{stats['mean']:.1f}")
             self.update_mqtt_state("thermal/median/state", f"{stats['median']:.1f}")
-            self.update_mqtt_state("thermal/mode/state", f"{stats['mode']:.1f}")
         except Exception as e:
             logger.error("Failed to publish thermal statistics: %s", e)
 

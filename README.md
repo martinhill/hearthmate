@@ -22,8 +22,13 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 ## TODO
 
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
+- Thermal Camera:
+        - optimize rgb conversion with numpy
+        - send raw temperature frames
+        - record temperature frames and vent position (timescaledb? influxdb?)
+- Back-off logic based on camera data
 - Ennumeration for direction in Vent class
-- Throttle/average RSSI
+- Throttle/average RSSI, tmp36
 - Add HA diagnostic entity to track motor step slippage % over movement from open->closed: 
         (steps_needed - actual_steps) / steps_needed
 - type annotations

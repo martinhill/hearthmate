@@ -20,6 +20,7 @@ from thermal_camera import get_thermal_camera, logger as cam_logger
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 THERMAL_CAMERA_INTERVAL = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
+THERMAL_MAX_TEMP_CHANGE = float(os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0))  # degrees C
 
 logger = logging.getLogger(__name__)
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
@@ -285,19 +286,33 @@ if __name__ == "__main__":
             
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
+                camera_start_time = time.monotonic()
                 frame = thermal_camera.capture_frame()
                 if frame:
-                    base64_image = thermal_camera.get_base64_image(frame)
-                    ha.update_thermal_camera(base64_image)
+                    # Calculate temperature statistics
+                    stats_start_time = time.monotonic()
+                    stats = thermal_camera.get_temperature_statistics()
+                    # stats = thermal_camera.get_temperature_statistics(frame)
                     
-                    # Calculate and publish temperature statistics
-                    stats = thermal_camera.get_temperature_statistics(frame)
-                    ha.update_thermal_statistics(stats)
-                    # logger.debug(
-                    #     "Thermal: min=%.1fC max=%.1fC mean=%.1fC median=%.1fC mode=%.1fC",
-                    #     stats['min'], stats['max'], stats['mean'], 
-                    #     stats['median'], stats['mode']
-                    # )
+                    # Validate stats to filter out erroneous readings
+                    if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
+                        # Stats are valid - publish image and statistics
+                        base64_start = time.monotonic()
+                        base64_image = thermal_camera.get_base64_image(frame)
+                        camera_end_time = time.monotonic()
+                        base64_time = camera_end_time - base64_start
+                        camera_process_time = camera_end_time - camera_start_time
+                        capture_time = stats_start_time - camera_start_time
+                        stats_calc_time = base64_start - stats_start_time
+                        logger.debug(
+                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs, %.4fs, %.4fs, %.4fs",
+                            stats['min'], stats['max'], stats['mean'], 
+                            stats['median'],
+                            camera_process_time, capture_time, stats_calc_time, base64_time
+                        )
+                        ha.update_thermal_camera(base64_image)
+                        ha.update_thermal_statistics(stats)
+                    # If invalid, validate_thermal_stats already logged the warning
                 last_camera_update = current_time
                 
         except MMQTTException as e:
@@ -309,8 +324,8 @@ if __name__ == "__main__":
         except OSError as e:
             mqtt_logger.error("Network/IO error during state update: %s", e)
             hardware.led_on()
-        except Exception as e:
-            mqtt_logger.error("Unexpected error in main loop: %s", e)
+        # except Exception as e:
+        #     mqtt_logger.error("Unexpected error in main loop: %s", e)
 
         # Small sleep to prevent busy-waiting
         time.sleep(0.1)

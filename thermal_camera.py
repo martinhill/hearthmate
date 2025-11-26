@@ -3,15 +3,29 @@ import os
 import board
 import busio
 import binascii
+from ulab import numpy as np
 import adafruit_logging as logging
 
-try:
+USE_MLX_HACK = False
+
+if USE_MLX_HACK:
+    import numpy_mlx90640 as adafruit_mlx90640
+else:
     import adafruit_mlx90640
+
+try:
+    from typing import Dict, List, Optional, Tuple
 except ImportError:
-    adafruit_mlx90640 = None
+    pass
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+# Constants for histogram-based median calculation
+HIST_MIN_TEMP = -10  # Minimum expected temperature in Celsius
+HIST_MAX_TEMP = 300  # Maximum expected temperature in Celsius
+HIST_BIN_SIZE = 10   # 0.1°C precision (multiply temp by 10)
+HIST_SIZE = (HIST_MAX_TEMP - HIST_MIN_TEMP) * HIST_BIN_SIZE + 1
 
 
 def encode_bmp(rgb_data, width, height):
@@ -74,8 +88,8 @@ class ThermalCamera:
     Interface for MLX90640 thermal camera with frame capture and colormap conversion.
     Provides thermal imaging at 24x32 resolution with configurable refresh rate.
     """
-    
-    def __init__(self, i2c, refresh_rate=2):
+
+    def __init__(self, i2c, refresh_rate=8):
         """
         Initialize MLX90640 thermal camera.
         
@@ -104,16 +118,25 @@ class ThermalCamera:
         else:
             self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_64_HZ
             
-        self.frame = [0] * 768  # 24 rows * 32 columns
+        # self.frame = [0] * 768  # 24 rows * 32 colums
+        if USE_MLX_HACK:
+            self.frame = np.zeros(768, dtype=np.float)
+        else:
+            self.frame = [0] * 768
         self.width = 32
         self.height = 24
         self.last_frame_time = 0
         self.retry_count = 0
         self.max_retries = 5
         
+        # Reusable data structures for statistics calculation
+        # self._temp_histogram = [0] * HIST_SIZE
+        self._temp_histogram = np.zeros(HIST_SIZE, dtype=np.uint16)
+        self._freq_map = {}
+        
         logger.info("MLX90640 initialized (serial: %s)", 
                    [hex(i) for i in self.mlx.serial_number])
-    
+
     def capture_frame(self):
         """
         Capture a single thermal frame from the camera.
@@ -137,7 +160,7 @@ class ThermalCamera:
                     logger.warning("Failed to capture frame after %d retries", self.max_retries)
                     return None
         return None
-    
+
     def get_temperature_range(self, frame=None):
         """
         Get min and max temperatures from a frame.
@@ -151,55 +174,22 @@ class ThermalCamera:
         if frame is None:
             frame = self.frame
         return (min(frame), max(frame))
-    
-    def get_temperature_statistics(self, frame=None):
-        """
-        Calculate statistical measures of temperature data.
-        
-        Args:
-            frame: Temperature frame data (uses last captured frame if None)
-            
-        Returns:
-            dict: Statistical measures including min, max, mean, median, mode
-        """
+
+    def get_temperature_statistics(self, frame: List[int] = None):
         if frame is None:
             frame = self.frame
-        
-        # Min and max
-        min_temp = min(frame)
-        max_temp = max(frame)
-        
-        # Mean
-        mean_temp = sum(frame) / len(frame)
-        
-        # Median - sort and find middle value(s)
-        sorted_temps = sorted(frame)
-        n = len(sorted_temps)
-        if n % 2 == 0:
-            median_temp = (sorted_temps[n // 2 - 1] + sorted_temps[n // 2]) / 2
+        if USE_MLX_HACK:
+            npframe = frame
         else:
-            median_temp = sorted_temps[n // 2]
-        
-        # Mode - find most frequent temperature (rounded to 0.1C for grouping)
-        # Build frequency map with 0.1C precision
-        freq_map = {}
-        for temp in frame:
-            rounded = round(temp, 1)
-            freq_map[rounded] = freq_map.get(rounded, 0) + 1
-        
-        # Find temperature(s) with highest frequency
-        max_freq = max(freq_map.values())
-        mode_temps = [temp for temp, freq in freq_map.items() if freq == max_freq]
-        mode_temp = sum(mode_temps) / len(mode_temps)  # Average if multiple modes
+            npframe = np.array(frame, dtype=np.float)
         
         return {
-            'min': min_temp,
-            'max': max_temp,
-            'mean': mean_temp,
-            'median': median_temp,
-            'mode': mode_temp
+            'min': np.min(npframe),
+            'max': np.max(npframe),
+            'mean': np.mean(npframe),
+            'median': np.median(npframe),
         }
-    
+
     def frame_to_rgb(self, frame=None, colormap='ironbow'):
         """
         Convert thermal frame to RGB data for image encoding.
@@ -240,7 +230,7 @@ class ThermalCamera:
             rgb_data[idx + 2] = b
             
         return rgb_data
-    
+
     def _ironbow_color(self, value):
         """
         Convert normalized value (0-1) to ironbow colormap RGB.
@@ -278,7 +268,7 @@ class ThermalCamera:
             b = 0
             
         return (r, g, b)
-    
+
     def get_image_data(self, frame=None, colormap='ironbow', format='bmp'):
         """
         Get encoded image data from thermal frame.
@@ -297,7 +287,7 @@ class ThermalCamera:
             return encode_bmp(rgb_data, self.width, self.height)
         else:
             raise ValueError(f"Unsupported image format: {format}")
-    
+
     def get_base64_image(self, frame=None, colormap='ironbow', format='bmp'):
         """
         Get base64-encoded image data for Home Assistant MQTT camera.
@@ -314,7 +304,7 @@ class ThermalCamera:
         return binascii.b2a_base64(image_data).decode('ascii').strip()
 
 
-class MockThermalCamera:
+class MockThermalCamera(ThermalCamera):
     """
     Mock implementation of ThermalCamera for testing without physical hardware.
     Generates simulated thermal data with a hot spot pattern.
@@ -378,27 +368,6 @@ class MockThermalCamera:
             frame = self.frame
         return (min(frame), max(frame))
     
-    def get_temperature_statistics(self, frame=None):
-        """Calculate statistical measures of temperature data."""
-        # Use same implementation as real camera
-        camera = ThermalCamera.__new__(ThermalCamera)
-        camera.frame = frame if frame is not None else self.frame
-        return camera.get_temperature_statistics(frame)
-    
-    def frame_to_rgb(self, frame=None, colormap='ironbow'):
-        """Convert thermal frame to RGB data."""
-        # Use same implementation as real camera
-        camera = ThermalCamera.__new__(ThermalCamera)
-        camera.width = self.width
-        camera.height = self.height
-        camera.frame = frame if frame is not None else self.frame
-        return camera.frame_to_rgb(frame, colormap)
-    
-    def _ironbow_color(self, value):
-        """Convert normalized value to ironbow colormap RGB."""
-        camera = ThermalCamera.__new__(ThermalCamera)
-        return camera._ironbow_color(value)
-    
     def get_image_data(self, frame=None, colormap='ironbow', format='bmp'):
         """Get encoded image data from thermal frame."""
         rgb_data = self.frame_to_rgb(frame, colormap)
@@ -440,6 +409,7 @@ def get_thermal_camera(i2c=None):
             return ThermalCamera(i2c)
         except Exception as e:
             logger.error("Failed to initialize MLX90640: %s", e)
+            raise
             logger.info("Falling back to MockThermalCamera")
             return MockThermalCamera(i2c)
     else:
@@ -447,4 +417,5 @@ def get_thermal_camera(i2c=None):
             logger.info("MLX90640 not detected on I2C bus - using mock camera")
         else:
             logger.info("MLX90640 library not available - using mock camera")
+        raise RuntimeError("MLX90640 missing")
         return MockThermalCamera(i2c)
