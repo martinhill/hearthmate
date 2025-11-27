@@ -17,6 +17,7 @@ from logging import MQTTHandler, FileHandler
 from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
 from homeassistant import HomeAssistant, logger as ha_logger
 from thermal_camera import get_thermal_camera, logger as cam_logger
+from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
 VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
 THERMAL_CAMERA_INTERVAL = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
@@ -184,12 +185,32 @@ def setup_loggers(mqtt_client: MQTT):
         ha_logger: [mqtt_handler, stream_handler],
         vm_logger: [mqtt_handler, file_handler],
         cam_logger: [mqtt_handler, file_handler],
+        stovelink_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
         for handler in handlers:
             lgr.addHandler(handler)
         lgr.setLevel(log_level)
     mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
+
+
+def get_combustion_time(machine: StateMachine) -> int:
+    """
+    Get elapsed combustion time in seconds.
+    
+    Args:
+        machine: State machine instance
+        
+    Returns:
+        int: Seconds since burn cycle started (0 if not in vent_closer state)
+    """
+    if machine.current_state == "vent_closer":
+        vent_closer = machine.states.get("vent_closer")
+        if vent_closer and vent_closer.machine.data.get("function"):
+            function = vent_closer.machine.data["function"]
+            elapsed = function.get_elapsed_time()
+            return int(max(0, elapsed))
+    return 0
 
 
 if __name__ == "__main__":
@@ -234,8 +255,9 @@ if __name__ == "__main__":
     vent = create_vent_from_env()
     machine = init_state_machine(mqtt_client, hardware, vent)
     
-    # Initialize thermal camera
+    # Initialize thermal camera and StoveLink encoder
     thermal_camera = get_thermal_camera(hardware.i2c)
+    stovelink_encoder = StoveLinkEncoder()
     last_camera_update = 0
 
     # Attempt initial MQTT connection
@@ -291,7 +313,8 @@ if __name__ == "__main__":
                 if frame:
                     # Calculate temperature statistics
                     stats_start_time = time.monotonic()
-                    stats = thermal_camera.get_temperature_statistics()
+                    np_frame = thermal_camera.get_np_frame()
+                    stats = thermal_camera.get_temperature_statistics(np_frame)
                     # stats = thermal_camera.get_temperature_statistics(frame)
                     
                     # Validate stats to filter out erroneous readings
@@ -299,16 +322,28 @@ if __name__ == "__main__":
                         # Stats are valid - publish image and statistics
                         base64_start = time.monotonic()
                         base64_image = thermal_camera.get_base64_image(frame)
+                        
+                        # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
+                        stovelink_start = time.monotonic()
+                        vent_position = vent.get_position()
+                        combustion_time = get_combustion_time(machine)
+                        stovelink_packet = stovelink_encoder.encode_packet(
+                            np_frame, 
+                            vent_position, 
+                            combustion_time
+                        )
+                        mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
+                        
                         camera_end_time = time.monotonic()
-                        base64_time = camera_end_time - base64_start
+                        base64_time = stovelink_start - base64_start
+                        stovelink_time = camera_end_time - stovelink_start
                         camera_process_time = camera_end_time - camera_start_time
                         capture_time = stats_start_time - camera_start_time
                         stats_calc_time = base64_start - stats_start_time
                         logger.debug(
-                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs, %.4fs, %.4fs, %.4fs",
-                            stats['min'], stats['max'], stats['mean'], 
-                            stats['median'],
-                            camera_process_time, capture_time, stats_calc_time, base64_time
+                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, b64=%.4fs, sl=%.4fs)",
+                            stats['min'], stats['max'], stats['mean'], stats['median'],
+                            camera_process_time, capture_time, stats_calc_time, base64_time, stovelink_time
                         )
                         ha.update_thermal_camera(base64_image)
                         ha.update_thermal_statistics(stats)

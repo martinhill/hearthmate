@@ -6,12 +6,7 @@ import binascii
 from ulab import numpy as np
 import adafruit_logging as logging
 
-USE_MLX_HACK = False
-
-if USE_MLX_HACK:
-    import numpy_mlx90640 as adafruit_mlx90640
-else:
-    import adafruit_mlx90640
+import adafruit_mlx90640
 
 try:
     from typing import Dict, List, Optional, Tuple
@@ -119,10 +114,7 @@ class ThermalCamera:
             self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_64_HZ
             
         # self.frame = [0] * 768  # 24 rows * 32 colums
-        if USE_MLX_HACK:
-            self.frame = np.zeros(768, dtype=np.float)
-        else:
-            self.frame = [0] * 768
+        self.frame = [0] * 768
         self.width = 32
         self.height = 24
         self.last_frame_time = 0
@@ -175,13 +167,18 @@ class ThermalCamera:
             frame = self.frame
         return (min(frame), max(frame))
 
-    def get_temperature_statistics(self, frame: List[int] = None):
+    def get_np_frame(self):
+        "Get a numpy array version of the current frame"
+        return np.array(self.frame, dtype=np.float)
+
+    def get_temperature_statistics(self, frame: np.ndarray[float] = None):
+        """Calculate basic statistics on the given frame. The argument is assumed to be a numpy array.
+        The current frame will be automatically used if provided frame is None.
+        """
         if frame is None:
-            frame = self.frame
-        if USE_MLX_HACK:
             npframe = frame
         else:
-            npframe = np.array(frame, dtype=np.float)
+            npframe = np.array(self.frame, dtype=np.float)
         
         return {
             'min': np.min(npframe),
