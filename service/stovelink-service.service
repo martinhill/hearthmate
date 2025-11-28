@@ -1,0 +1,32 @@
+[Unit]
+Description=StoveLink MQTT Service for Thermal Camera Data Processing
+Documentation=https://github.com/hearthmate/hearthmate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stovelink
+Group=stovelink
+WorkingDirectory=/opt/stovelink
+ExecStart=/opt/stovelink/.venv/bin/python3 -m stovelink_service \
+    --mqtt-host localhost \
+    --mqtt-port 1883 \
+    --input-topic burnie/stovelink \
+    --output-topic burnie/thermal_camera \
+    --hdf5-file /mnt/burnie/thermal_data.h5
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stovelink-service
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/mnt/burnie
+
+[Install]
+WantedBy=multi-user.target

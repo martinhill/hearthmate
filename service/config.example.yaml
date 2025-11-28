@@ -1,0 +1,82 @@
+# StoveLink Service Configuration Example
+# Copy this file to config.yaml and customize for your setup
+
+# MQTT Broker Configuration
+mqtt:
+  # Hostname or IP address of the MQTT broker
+  host: localhost
+  
+  # MQTT broker port (1883 for unencrypted, 8883 for TLS)
+  port: 1883
+  
+  # MQTT username (optional)
+  # username: stovelink
+  
+  # MQTT password (optional)
+  # password: your_password_here
+  
+  # Topics
+  topics:
+    # Topic to subscribe for StoveLink binary packets from the MCU
+    input: burnie/stovelink
+    
+    # Topic to publish thermal camera RGB images for Home Assistant
+    output: burnie/thermal_camera
+
+# Data Storage Configuration
+storage:
+  # Path to HDF5 file for storing thermal frames and metadata
+  hdf5_file: /mnt/burnie/thermal_data.h5
+  
+  # Flush data to disk after every N packets (0 = flush every packet)
+  flush_interval: 10
+
+# Logging Configuration
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: INFO
+  
+  # Log file path (optional, logs to syslog if running as systemd service)
+  # file: /var/log/stovelink-service.log
+  
+  # Format string for log messages
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Image Generation Configuration
+image:
+  # Colormap to use: 'ironbow' or 'grayscale'
+  colormap: ironbow
+  
+  # Image format: 'bmp' (only format supported currently)
+  format: bmp
+  
+  # Width and height of thermal array
+  width: 32
+  height: 24
+
+# Performance Configuration
+performance:
+  # Maximum number of concurrent packet processing threads
+  max_workers: 1
+  
+  # Queue size for pending messages
+  queue_size: 100
+  
+  # Timeout for message processing in seconds
+  timeout: 30
+
+# Home Assistant Integration
+homeassistant:
+  # Enable Home Assistant MQTT Discovery
+  discovery: true
+  
+  # Prefix for Home Assistant discovery topics
+  discovery_prefix: homeassistant
+  
+  # Device information for Home Assistant
+  device:
+    name: "Stove Thermal Camera"
+    manufacturer: "HearthMate"
+    model: "Stove Monitor"
+    identifiers:
+      - stove_thermal

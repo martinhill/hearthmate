@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stovelink-service"
+version = "0.1.0"
+description = "StoveLink MQTT service for thermal camera data processing, HDF5 storage, and RGB image generation"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "HearthMate Contributors", email = "support@hearthmate.local"}
+]
+keywords = ["mqtt", "thermal", "camera", "hdf5", "stovelink"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Home Automation",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+dependencies = [
+    "paho-mqtt>=2.0.0",
+    "h5py>=3.0.0",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+stovelink-service = "stovelink_service:main"
+
+[project.urls]
+Homepage = "https://github.com/hearthmate/hearthmate"
+Documentation = "https://github.com/hearthmate/hearthmate/blob/main/README.md"
+Repository = "https://github.com/hearthmate/hearthmate.git"
+Issues = "https://github.com/hearthmate/hearthmate/issues"
+
+[tool.setuptools]
+packages = ["stovelink_service"]
+
+[tool.setuptools.package-data]
+stovelink_service = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38', 'py39', 'py310', 'py311', 'py312', 'py313']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+select = ["E", "F", "W", "I"]

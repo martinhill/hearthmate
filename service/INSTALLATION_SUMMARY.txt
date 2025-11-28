@@ -1,0 +1,186 @@
+================================================================================
+StoveLink MQTT Service - Installation Package
+================================================================================
+
+PACKAGE CONTENTS:
+================================================================================
+
+1. stovelink_service.py
+   - Main service application
+   - Listens to MQTT for StoveLink thermal data
+   - Decodes packets, generates RGB images, stores to HDF5
+   - ~16 KB, well-documented, production-ready
+
+2. pyproject.toml
+   - Python package configuration
+   - Declares dependencies: paho-mqtt, h5py, numpy
+   - Supports Python 3.8 - 3.13
+   - Entry point: stovelink-service command
+
+3. stovelink-service.service
+   - Systemd service unit file
+   - Runs service as 'stovelink' user
+   - Automatic restart on failure
+   - Security hardening enabled
+   - Logs to systemd journal
+
+4. install.sh
+   - Automated installation script
+   - Creates user/group, directories, virtual environment
+   - Installs all dependencies
+   - Sets up systemd service
+   - Run with: sudo ./install.sh
+
+5. config.example.yaml
+   - Configuration template
+   - MQTT settings, storage paths, image options
+   - Copy and customize for your setup
+
+6. README.md
+   - Comprehensive documentation
+   - Installation, configuration, usage
+   - Troubleshooting guide
+   - Data structure, Home Assistant integration
+   - Performance notes
+
+7. QUICKSTART.md
+   - Fast 5-minute setup guide
+   - Minimal steps to get running
+   - Common issues and solutions
+   - Home Assistant integration example
+
+================================================================================
+QUICK START
+================================================================================
+
+1. Run the installer (requires sudo):
+   $ sudo service/install.sh
+
+2. Configure MQTT settings:
+   $ sudo nano /etc/systemd/system/stovelink-service.service
+
+3. Start the service:
+   $ sudo systemctl start stovelink-service
+
+4. Check status:
+   $ sudo systemctl status stovelink-service
+
+5. View logs:
+   $ sudo journalctl -u stovelink-service -f
+
+For more details, see QUICKSTART.md or README.md
+
+================================================================================
+WHAT THE SERVICE DOES
+================================================================================
+
+✓ Subscribes to MQTT topic for StoveLink thermal camera packets
+✓ Decodes binary packets (32x24 = 768 temperature readings per frame)
+✓ Stores frames, metadata to HDF5 for analysis/ML
+✓ Generates colorful RGB thermal images using ironbow colormap
+✓ Publishes base64-encoded BMP images to MQTT for Home Assistant
+✓ Relieves MCU from image rendering (significant processing offload)
+✓ Robust error handling and graceful degradation
+✓ Systemd integration with auto-restart
+✓ Comprehensive logging via journal
+
+================================================================================
+REQUIREMENTS
+================================================================================
+
+System:
+  - Linux with systemd (Ubuntu, Debian, CentOS, etc.)
+  - Python 3.8 or higher
+  - MQTT broker (e.g., Mosquitto)
+  - ~100 MB disk space for service + data
+  - 50-100 MB RAM per service instance
+
+Optional:
+  - Home Assistant (for visualization)
+  - Grafana (for analytics)
+  - PostgreSQL/InfluxDB (for long-term storage)
+
+================================================================================
+FEATURES & ARCHITECTURE
+================================================================================
+
+Decoding:
+  - Parses 1552-byte StoveLink binary packets
+  - Extracts: sequence_id, timestamp, vent_position, combustion_time, 768 temps
+  - Handles packet validation and error recovery
+
+Storage:
+  - Unlimited HDF5 storage with automatic chunking
+  - Efficient compression and sparse data support
+  - Metadata for troubleshooting and analysis
+
+Image Generation:
+  - Numpy-optimized colormap rendering
+  - Ironbow/grayscale palettes supported
+  - BMP format (no compression library needed)
+  - Base64 encoding for MQTT transmission
+
+MQTT:
+  - Paho-MQTT with CallbackAPI v2 support
+  - Reconnect on broker disconnection
+  - QoS 1 publishing for reliability
+  - Optional authentication
+
+================================================================================
+FILE LOCATIONS (after installation)
+================================================================================
+
+Service Code:        /opt/stovelink/stovelink_service.py
+Python Environment:  /opt/stovelink/.venv/
+Data Storage:        /mnt/burnie/thermal_data.h5
+Systemd Service:     /etc/systemd/system/stovelink-service.service
+Service User:        stovelink (uid auto-assigned)
+Service Group:       stovelink (gid auto-assigned)
+
+================================================================================
+DOCUMENTATION
+================================================================================
+
+README.md
+  - Full reference documentation
+  - Installation, configuration, usage
+  - Data structure and schema
+  - Home Assistant integration
+  - Troubleshooting and performance
+
+QUICKSTART.md
+  - 5-minute quick start
+  - Common issues and solutions
+  - Verification steps
+
+config.example.yaml
+  - Configuration reference
+  - All available options with comments
+  - Example Home Assistant setup
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Read QUICKSTART.md for fast setup
+2. Run: sudo ./install.sh
+3. Configure MQTT in /etc/systemd/system/stovelink-service.service
+4. Start service: sudo systemctl start stovelink-service
+5. Verify: sudo journalctl -u stovelink-service -f
+6. Add to Home Assistant (see README.md)
+
+================================================================================
+SUPPORT & ISSUES
+================================================================================
+
+Documentation: See README.md and QUICKSTART.md
+Logs: sudo journalctl -u stovelink-service
+Project: https://github.com/hearthmate/hearthmate
+
+For issues:
+  1. Check logs: sudo journalctl -u stovelink-service -n 100
+  2. Verify MQTT broker is running
+  3. Check topic names match MCU configuration
+  4. See Troubleshooting section in README.md
+
+================================================================================
