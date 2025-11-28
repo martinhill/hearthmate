@@ -47,8 +47,9 @@ cp stovelink-service.service /etc/systemd/system/
 chmod 644 /etc/systemd/system/stovelink-service.service
 echo "   Installed systemd service file"
 
-# Copy service code to install path
+# Copy service code and configuration to install path
 cp stovelink_service.py "$INSTALL_PATH/"
+cp pyproject.toml "$INSTALL_PATH/"
 echo "   Copied service code"
 
 echo
@@ -62,8 +63,8 @@ source .venv/bin/activate
 # Upgrade pip
 .venv/bin/pip install --upgrade pip setuptools wheel
 
-# Install the package in development mode
-pip install -e "$(dirname "$0")"
+# Install the package in development mode from the current installation directory
+pip install -e .
 
 echo "   Installed Python dependencies"
 
