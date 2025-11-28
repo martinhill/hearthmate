@@ -51,10 +51,7 @@ Repository = "https://github.com/hearthmate/hearthmate.git"
 Issues = "https://github.com/hearthmate/hearthmate/issues"
 
 [tool.setuptools]
-packages = ["stovelink_service"]
-
-[tool.setuptools.package-data]
-stovelink_service = ["py.typed"]
+py-modules = ["stovelink_service"]
 
 [tool.black]
 line-length = 100
