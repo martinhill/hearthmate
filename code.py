@@ -320,8 +320,6 @@ if __name__ == "__main__":
                     # Validate stats to filter out erroneous readings
                     if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
                         # Stats are valid - publish image and statistics
-                        base64_start = time.monotonic()
-                        base64_image = thermal_camera.get_base64_image(frame)
                         
                         # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
                         stovelink_start = time.monotonic()
@@ -335,17 +333,15 @@ if __name__ == "__main__":
                         mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
                         
                         camera_end_time = time.monotonic()
-                        base64_time = stovelink_start - base64_start
                         stovelink_time = camera_end_time - stovelink_start
                         camera_process_time = camera_end_time - camera_start_time
                         capture_time = stats_start_time - camera_start_time
-                        stats_calc_time = base64_start - stats_start_time
+                        stats_calc_time = stovelink_start - stats_start_time
                         logger.debug(
-                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, b64=%.4fs, sl=%.4fs)",
+                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
                             stats['min'], stats['max'], stats['mean'], stats['median'],
-                            camera_process_time, capture_time, stats_calc_time, base64_time, stovelink_time
+                            camera_process_time, capture_time, stats_calc_time, stovelink_time
                         )
-                        ha.update_thermal_camera(base64_image)
                         ha.update_thermal_statistics(stats)
                     # If invalid, validate_thermal_stats already logged the warning
                 last_camera_update = current_time

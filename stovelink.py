@@ -67,6 +67,7 @@ class StoveLinkEncoder:
         # Convert vent position from 0.0-1.0 (open-closed) to 0.0-100.0 (closed-open)
         # Invert: 0.0 open becomes 100.0, 1.0 closed becomes 0.0
         vent_position_percent = (1.0 - vent_position) * 100.0
+        vent_position_percent = max(0.0, min(vent_position_percent, 100.0))
         
         # Calculate timestamp in milliseconds since boot
         timestamp_ms = int((time.monotonic() - self.boot_time) * 1000)

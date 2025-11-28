@@ -50,7 +50,7 @@ class HomeAssistant:
                     "name": "RSSI",
                     "p": "sensor",
                     "device_class": "signal_strength",
-                    "unit_of_measurement": "dBm",
+                    "unit_of_meas": "dBm",
                     "ent_cat": "diagnostic",
                     "unique_id": f"{self.device_name}_rssi",
                     "state_topic": f"{self.topic_prefix}/rssi/state",
@@ -91,6 +91,30 @@ class HomeAssistant:
                         { "topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "sequence_id": {
+                    "name": "Stovelink Sequence",
+                    "p": "sensor",
+                    "ent_cat": "diagnostic",
+                    "unique_id": f"{self.device_name}_seq_id",
+                    "state_topic": f"{self.topic_prefix}/service/state",
+                    "value_template": "{{ value_json.sequence_id }}",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "timestamp_ms": {
+                    "name": "Stovelink uptime",
+                    "p": "sensor",
+                    "device_class": "duration",
+                    "unit_of_meas": "ms",
+                    "ent_cat": "diagnostic",
+                    "unique_id": f"{self.device_name}_timestamp_ms",
+                    "state_topic": f"{self.topic_prefix}/service/state",
+                    "value_template": "{{ value_json.timestamp_ms }}",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "air_vent": {
                     "name": "Air Vent",
                     "p": "valve",
@@ -125,7 +149,7 @@ class HomeAssistant:
                     "command_topic": f"{self.topic_prefix}/duration/set",
                     "state_topic": f"{self.topic_prefix}/duration/state",
                     "device_class": "duration",
-                    "unit_of_measurement": "minutes",
+                    "unit_of_meas": "minutes",
                     "min": 5,
                     "max": 120,
                     "avty": [
@@ -136,7 +160,7 @@ class HomeAssistant:
                     "name": "TMP36",
                     "p": "sensor",
                     "device_class": "temperature",
-                    "unit_of_measurement": "°C",
+                    "unit_of_meas": "°C",
                     "unique_id": f"{self.device_name}_tmp36",
                     "state_topic": f"{self.topic_prefix}/tmp36/state",
                     "avty": [
@@ -157,7 +181,7 @@ class HomeAssistant:
                     "name": "Thermal Min Temperature",
                     "p": "sensor",
                     "device_class": "temperature",
-                    "unit_of_measurement": "°C",
+                    "unit_of_meas": "°C",
                     "unique_id": f"{self.device_name}_thermal_temp_min",
                     "state_topic": f"{self.topic_prefix}/thermal/min/state",
                     "avty": [
@@ -168,7 +192,7 @@ class HomeAssistant:
                     "name": "Thermal Max Temperature",
                     "p": "sensor",
                     "device_class": "temperature",
-                    "unit_of_measurement": "°C",
+                    "unit_of_meas": "°C",
                     "unique_id": f"{self.device_name}_thermal_temp_max",
                     "state_topic": f"{self.topic_prefix}/thermal/max/state",
                     "avty": [
@@ -179,7 +203,7 @@ class HomeAssistant:
                     "name": "Thermal Mean Temperature",
                     "p": "sensor",
                     "device_class": "temperature",
-                    "unit_of_measurement": "°C",
+                    "unit_of_meas": "°C",
                     "unique_id": f"{self.device_name}_thermal_temp_mean",
                     "state_topic": f"{self.topic_prefix}/thermal/mean/state",
                     "avty": [
@@ -190,9 +214,21 @@ class HomeAssistant:
                     "name": "Thermal Median Temperature",
                     "p": "sensor",
                     "device_class": "temperature",
-                    "unit_of_measurement": "°C",
+                    "unit_of_meas": "°C",
                     "unique_id": f"{self.device_name}_thermal_temp_median",
                     "state_topic": f"{self.topic_prefix}/thermal/median/state",
+                    "avty": [
+                        { "topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "burn_time": {
+                    "name": "Burn time",
+                    "p": "sensor",
+                    "device_class": "duration",
+                    "unit_of_meas": "s",
+                    "unique_id": f"{self.device_name}_burn_time",
+                    "state_topic": f"{self.topic_prefix}/service/state",
+                    "value_template": "{{ value_json.combustion_time }}",
                     "avty": [
                         { "topic": f"{self.topic_prefix}/status"},
                     ],

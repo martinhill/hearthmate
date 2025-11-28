@@ -8,6 +8,8 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 - [Adafruit Stepper + DC Motor FeatherWing](https://learn.adafruit.com/adafruit-stepper-dc-motor-featherwing/)
 - 2.3 Kg*cm NEMA16 Bipolar stepper
 - [ams AS5600 position sensor](https://ams-osram.com/products/sensor-solutions/position-sensors/ams-as5600-position-sensor)
+- MLX 90640 thermal 32x24 IR array
+- TMP36 analog temperature sensor
 - 5:1 gear ratio belt and pulley connecting motor to drive shaft
 - mechanical linkage from drive shaft to vent control lever arm
 
@@ -22,10 +24,7 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 ## TODO
 
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
-- Thermal Camera:
-        - optimize rgb conversion with numpy
-        - send raw temperature frames
-        - record temperature frames and vent position (timescaledb? influxdb?)
+- stovelink seq num and other state info recovery after reboot
 - Back-off logic based on camera data
 - Ennumeration for direction in Vent class
 - Throttle/average RSSI, tmp36

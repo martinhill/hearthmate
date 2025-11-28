@@ -29,14 +29,19 @@ class VentFunctionABC():
         self.time_adjustment = 0
 
     def get_position(self):
-        return self.start_position
+        "Calculates the position at the current (adjusted) time"
+        raise NotImplementedError
 
     def inverse(self, position) -> float:
         "Returns the time for given position in range (0, time_range)"
-        return 0
+        raise NotImplementedError
 
     def get_elapsed_time(self):
-        "Get elapsed time since start in range of 0 to time_range"
+        "Get time since start() was called, un-adjusted"
+        return self.time_func() - self.start_time
+
+    def get_adjusted_time(self):
+        "Get adjusted elapsed time since start in range of 0 to time_range"
         elapsed_time = self.time_func() + self.time_adjustment - self.start_time
         # logger.debug("Function elapsed_time=%d", elapsed_time)
         return elapsed_time
@@ -56,7 +61,7 @@ class LinearVentFunction(VentFunctionABC):
         return int(self.time_range * pct_moved)
 
     def get_position(self):
-        pct_time = self.get_elapsed_time() / self.time_range
+        pct_time = self.get_adjusted_time() / self.time_range
         target_pos = self.start_position + (1.0 - self.start_position) * pct_time
         target_pos = max(0.0, min(target_pos, 1.0))
         return target_pos

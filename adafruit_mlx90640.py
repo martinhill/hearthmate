@@ -136,7 +136,7 @@ class MLX90640:
             t0 = time.monotonic()
             status = self._GetFrameData(mlx90640Frame, subpage)
             t1 = time.monotonic()
-            print("_GetFrameData status =", status)
+            # print("_GetFrameData status =", status)
             if status < 0:
                 raise RuntimeError("Frame data error")
             # For a MLX90640 in the open air the shift is -8 degC.
@@ -144,7 +144,7 @@ class MLX90640:
             tr = self._GetTa(mlx90640Frame) - OPENAIR_TA_SHIFT
             self._CalculateTo(mlx90640Frame, emissivity, tr, framebuf)
             tend = time.monotonic()
-            print("_GetFrameData duration =", t1-t0, "_CalculateTo duration =", tend-t2)
+            # print("_GetFrameData duration =", t1-t0, "_CalculateTo duration =", tend-t2)
             subpage = 0 if status else 1
 
     def _GetFrameData(self, frameData: List[int], subpage: int = None) -> int:
