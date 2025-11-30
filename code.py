@@ -14,14 +14,21 @@ from airvent import create_vent_from_env
 from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
 from vent_mover import MoveVentState, logger as vm_logger
 from logging import MQTTHandler, FileHandler
-from connections import WiFiConnectionManager, MQTTConnectionManager, logger as conn_logger
+from connections import (
+    WiFiConnectionManager,
+    MQTTConnectionManager,
+    logger as conn_logger,
+)
 from homeassistant import HomeAssistant, logger as ha_logger
 from thermal_camera import get_thermal_camera, logger as cam_logger
 from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
-VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60*60)
+VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60 * 60)
 THERMAL_CAMERA_INTERVAL = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
 THERMAL_MAX_TEMP_CHANGE = float(os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0))  # degrees C
+MEASUREMENT_BUFFER_INTERVAL = int(
+    os.getenv("MEASUREMENT_BUFFER_INTERVAL", 15)
+)  # seconds
 
 logger = logging.getLogger(__name__)
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
@@ -31,13 +38,15 @@ stream_handler = logging.StreamHandler()
 logger.addHandler(stream_handler)
 mqtt_logger = logging.getLogger("mqtt")
 
+
 class IdleState(State):
     """
     Idle state.
     If vent movement to fully closed position is detected, and then fully open,
     the state machine will transition to "vent_closer" state.
     """
-    def __init__(self, sensitivity = 0.001):
+
+    def __init__(self, sensitivity=0.001):
         super().__init__("idle")
         self.detected_fully_closed = False
         self.sensitivity = sensitivity
@@ -45,7 +54,7 @@ class IdleState(State):
     def enter(self, machine):
         hardware = machine.data["hardware"]
         hardware.motor.release()
-        hardware.set_pixel_color((0,32,32)) # teal
+        hardware.set_pixel_color((0, 32, 32))  # teal
         vent.update_from_hardware(hardware.read_raw_angle())
         self.last_position = vent.get_position()
         logger.info("Idle")
@@ -54,7 +63,7 @@ class IdleState(State):
         hardware = machine.data["hardware"]
         hardware.motor.release()
         if self.detected_fully_closed:
-            hardware.set_pixel_color((0x8f,0x8f,0)) # yellow
+            hardware.set_pixel_color((0x8F, 0x8F, 0))  # yellow
         logger.info("resumed Idle")
 
     def handle_move_request(self, machine, target_position):
@@ -71,10 +80,10 @@ class IdleState(State):
         if abs(vent_position - self.last_position) < self.sensitivity:
             machine.mqtt_loop()
         self.last_position = vent_position
-        if  vent_position > 0.99 and not self.detected_fully_closed:
+        if vent_position > 0.99 and not self.detected_fully_closed:
             # first detection of vent closed
             self.detected_fully_closed = True
-            hardware.set_pixel_color((0x8f,0x8f,0)) # yellow
+            hardware.set_pixel_color((0x8F, 0x8F, 0))  # yellow
             logger.info("Detected vent closed")
         elif vent_position < 0.01 and self.detected_fully_closed:
             # detected vent fully open after closed position - transition
@@ -103,11 +112,12 @@ class Calibrate(State):
 mqtt_topic = os.getenv("MQTT_TOPIC")
 command_topic = mqtt_topic + "/command"
 
+
 def init_mqtt_client(
     message_callback,
-    mqtt_host=os.getenv('MQTT_HOST'),
-    mqtt_user=os.getenv('MQTT_USER'),
-    mqtt_password=os.getenv('MQTT_PASSWORD'),
+    mqtt_host=os.getenv("MQTT_HOST"),
+    mqtt_user=os.getenv("MQTT_USER"),
+    mqtt_password=os.getenv("MQTT_PASSWORD"),
 ) -> MQTT:
     # Create a socket pool
     pool = socketpool.SocketPool(wifi.radio)
@@ -124,7 +134,9 @@ def init_mqtt_client(
     def connected(client, userdata, flags, rc):
         # This function will be called when the client is connected
         # successfully to the broker.
-        logger.info("Connected to %s! Listening for commands on %s", mqtt_host, command_topic)
+        logger.info(
+            "Connected to %s! Listening for commands on %s", mqtt_host, command_topic
+        )
         # Subscribe to all changes on the onoff_feed.
         client.subscribe(command_topic)
 
@@ -142,7 +154,6 @@ def init_mqtt_client(
 
 
 def init_state_machine(mqtt_client, hardware, vent):
-
     # Create the state machine
     machine = StateMachine()
     machine.data["hardware"] = hardware
@@ -154,6 +165,7 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.add_state(VentCloser(LinearVentFunction(VENT_CLOSE_TIME)))
     return machine
 
+
 def check_encoder(hardware):
     encoder_status = hardware.read_encoder_status()
     encoder_md = bool(encoder_status & 0x20)
@@ -163,14 +175,21 @@ def check_encoder(hardware):
         logger.info("Encoder status ok: magnet detected (STATUS=0x%X)", encoder_status)
     elif encoder_md and (encoder_ml or encoder_mh):
         magnet_condition = "weak" if encoder_ml else "strong"
-        logger.warning("Encoder status check: magnet detected but too %s (STATUS=0x%X)", magnet_condition, encoder_status)
+        logger.warning(
+            "Encoder status check: magnet detected but too %s (STATUS=0x%X)",
+            magnet_condition,
+            encoder_status,
+        )
     else:
         logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
     return (encoder_md, encoder_ml, encoder_mh)
 
+
 def setup_loggers(mqtt_client: MQTT):
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/log")
-    timestamp_formatter = logging.Formatter(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    timestamp_formatter = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     mqtt_handler.setFormatter(timestamp_formatter)
     file_handler = FileHandler("logs")
     file_handler.setFormatter(timestamp_formatter)
@@ -191,16 +210,18 @@ def setup_loggers(mqtt_client: MQTT):
         for handler in handlers:
             lgr.addHandler(handler)
         lgr.setLevel(log_level)
-    mqtt_logger.setLevel(getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO))
+    mqtt_logger.setLevel(
+        getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO)
+    )
 
 
 def get_combustion_time(machine: StateMachine) -> int:
     """
     Get elapsed combustion time in seconds.
-    
+
     Args:
         machine: State machine instance
-        
+
     Returns:
         int: Seconds since burn cycle started (0 if not in vent_closer state)
     """
@@ -227,9 +248,8 @@ if __name__ == "__main__":
             logger.warning("Unknown command: %s", message)
 
     # Map topic to callable
-    mqtt_message_handlers = {
-        command_topic: command_handler
-    }
+    mqtt_message_handlers = {command_topic: command_handler}
+
     def message_callback(client, topic, message):
         # This method is called when a topic the client is subscribed to
         # has a new message.
@@ -254,7 +274,7 @@ if __name__ == "__main__":
     hardware.led_on()
     vent = create_vent_from_env()
     machine = init_state_machine(mqtt_client, hardware, vent)
-    
+
     # Initialize thermal camera and StoveLink encoder
     thermal_camera = get_thermal_camera(hardware.i2c)
     stovelink_encoder = StoveLinkEncoder()
@@ -270,7 +290,12 @@ if __name__ == "__main__":
         logger.error("Failed to connect to MQTT: %s", e)
 
     # Integrate with Home Assistant
-    ha = HomeAssistant(machine, mqtt_topic, wifi.radio.hostname)
+    ha = HomeAssistant(
+        machine,
+        mqtt_topic,
+        wifi.radio.hostname,
+        measurement_buffer_interval=MEASUREMENT_BUFFER_INTERVAL,
+    )
     discovery = ha.mqtt_discovery()
     ha_handlers = ha.get_command_handlers()
     for topic in ha_handlers:
@@ -305,7 +330,7 @@ if __name__ == "__main__":
         try:
             machine.update()
             ha.update()
-            
+
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
                 camera_start_time = time.monotonic()
@@ -316,22 +341,20 @@ if __name__ == "__main__":
                     np_frame = thermal_camera.get_np_frame()
                     stats = thermal_camera.get_temperature_statistics(np_frame)
                     # stats = thermal_camera.get_temperature_statistics(frame)
-                    
+
                     # Validate stats to filter out erroneous readings
                     if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
                         # Stats are valid - publish image and statistics
-                        
+
                         # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
                         stovelink_start = time.monotonic()
                         vent_position = vent.get_position()
                         combustion_time = get_combustion_time(machine)
                         stovelink_packet = stovelink_encoder.encode_packet(
-                            np_frame, 
-                            vent_position, 
-                            combustion_time
+                            np_frame, vent_position, combustion_time
                         )
                         mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
-                        
+
                         camera_end_time = time.monotonic()
                         stovelink_time = camera_end_time - stovelink_start
                         camera_process_time = camera_end_time - camera_start_time
@@ -339,13 +362,19 @@ if __name__ == "__main__":
                         stats_calc_time = stovelink_start - stats_start_time
                         logger.debug(
                             "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
-                            stats['min'], stats['max'], stats['mean'], stats['median'],
-                            camera_process_time, capture_time, stats_calc_time, stovelink_time
+                            stats["min"],
+                            stats["max"],
+                            stats["mean"],
+                            stats["median"],
+                            camera_process_time,
+                            capture_time,
+                            stats_calc_time,
+                            stovelink_time,
                         )
                         ha.update_thermal_statistics(stats)
                     # If invalid, validate_thermal_stats already logged the warning
                 last_camera_update = current_time
-                
+
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
             # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler
@@ -360,4 +389,3 @@ if __name__ == "__main__":
 
         # Small sleep to prevent busy-waiting
         time.sleep(0.1)
-
