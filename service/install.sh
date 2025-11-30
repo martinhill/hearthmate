@@ -43,7 +43,7 @@ echo "3. Installing service files..."
 cd "$(dirname "$0")"
 
 # Copy service file
-cp stovelink-service.service /etc/systemd/system/
+cp --update=none stovelink-service.service /etc/systemd/system/
 chmod 644 /etc/systemd/system/stovelink-service.service
 echo "   Installed systemd service file"
 
