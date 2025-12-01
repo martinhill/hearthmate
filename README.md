@@ -24,7 +24,6 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 ## TODO
 
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
-- file rotation in stovelink service
 - stovelink seq num, burn time, and other state info recovery after reboot: use mqtt retain
 - Back-off logic based on camera data
 - Ennumeration for direction in Vent class

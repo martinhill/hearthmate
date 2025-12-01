@@ -12,9 +12,12 @@ WorkingDirectory=/opt/stovelink
 ExecStart=/opt/stovelink/.venv/bin/python3 -m stovelink_service \
     --mqtt-host localhost \
     --mqtt-port 1883 \
+    --username stovelink \
+    --password stovelink \
     --input-topic burnie/stovelink \
     --output-topic burnie/thermal_camera \
-    --hdf5-file /mnt/burnie/thermal_data.h5
+    --diagnostic-topic burnie/service/state \
+    --hdf5-dir /mnt/burnie
 Restart=on-failure
 RestartSec=10s
 StandardOutput=journal

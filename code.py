@@ -154,7 +154,7 @@ def init_mqtt_client(
     return mqtt_client
 
 
-def init_state_machine(mqtt_client, hardware, vent):
+def init_state_machine(mqtt_client, hardware, vent, closer_function):
     # Create the state machine
     machine = StateMachine()
     machine.data["hardware"] = hardware
@@ -163,7 +163,7 @@ def init_state_machine(mqtt_client, hardware, vent):
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
     machine.add_state(MoveVentState())
-    machine.add_state(VentCloser(LinearVentFunction(VENT_CLOSE_TIME)))
+    machine.add_state(VentCloser(closer_function))
     return machine
 
 
@@ -216,7 +216,7 @@ def setup_loggers(mqtt_client: MQTT):
     )
 
 
-def get_combustion_time(machine: StateMachine) -> int:
+def get_combustion_time(closer_function: VentFunctionABC) -> int:
     """
     Get elapsed combustion time in seconds.
 
@@ -226,12 +226,8 @@ def get_combustion_time(machine: StateMachine) -> int:
     Returns:
         int: Seconds since burn cycle started (0 if not in vent_closer state)
     """
-    if machine.current_state == "vent_closer":
-        vent_closer = machine.states.get("vent_closer")
-        if vent_closer and vent_closer.machine.data.get("function"):
-            function = vent_closer.machine.data["function"]
-            elapsed = function.get_elapsed_time()
-            return int(max(0, elapsed))
+    elapsed = closer_function.get_elapsed_time()
+    return int(max(0, elapsed))
     return 0
 
 def do_thermal_camera_stuff(camera_exception_raised):
@@ -268,7 +264,7 @@ def do_thermal_camera_stuff(camera_exception_raised):
             # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
             stovelink_start = time.monotonic()
             vent_position = vent.get_position()
-            combustion_time = get_combustion_time(machine)
+            combustion_time = get_combustion_time(closer_function)
             stovelink_packet = stovelink_encoder.encode_packet(
                 np_frame, vent_position, combustion_time
             )
@@ -335,7 +331,8 @@ if __name__ == "__main__":
     hardware = get_hardware()
     hardware.led_on()
     vent = create_vent_from_env()
-    machine = init_state_machine(mqtt_client, hardware, vent)
+    closer_function = LinearVentFunction(VENT_CLOSE_TIME)
+    machine = init_state_machine(mqtt_client, hardware, vent, closer_function)
 
     # Initialize thermal camera and StoveLink encoder
     thermal_camera = get_thermal_camera(hardware.i2c, allow_mock=True)

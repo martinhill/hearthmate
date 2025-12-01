@@ -8,8 +8,12 @@ to Home Assistant MQTT camera topics.
 
 This relieves the MCU from image generation processing.
 
+HDF5 files are automatically rotated when a combustion time reset is detected (indicating
+a new firing cycle). Completed files are organized in YYYYMM/DD subdirectories with
+filenames in the format YYYYMMDD-NN.h5 where NN is the cycle number.
+
 Usage:
-    python3 stovelink_service.py --mqtt-host localhost --input-topic stovelink/data --output-topic homeassistant/camera/thermal/image --hdf5-file thermal_data.h5
+    python3 stovelink_service.py --mqtt-host localhost --input-topic stovelink/data --output-topic homeassistant/camera/thermal/image --hdf5-dir /data/thermal
 
 Dependencies:
     - paho-mqtt: MQTT client
@@ -21,7 +25,10 @@ import argparse
 import base64
 import json
 import logging
+import shutil
 import struct
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 import h5py
@@ -241,16 +248,23 @@ class ThermalImageGenerator:
 
 class HDF5Storage:
     """
-    Handles HDF5 storage of thermal camera data.
+    Handles HDF5 storage of thermal camera data with automatic file rotation.
     """
 
-    def __init__(self, filename: str):
-        self.filename = filename
+    def __init__(self, base_dir: str, initial_filename: str = "current_cycle.h5"):
+        self.base_dir = Path(base_dir)
+        # Ensure base directory exists
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        # Initial file is in the base directory
+        self.current_filename = str(self.base_dir / initial_filename)
         self.file: Optional[h5py.File] = None
+        self.last_combustion_time: Optional[int] = None
 
-    def open(self):
+    def open(self, filename: Optional[str] = None):
         """Open HDF5 file for writing."""
-        self.file = h5py.File(self.filename, "a")
+        if filename:
+            self.current_filename = filename
+        self.file = h5py.File(self.current_filename, "a")
 
         # Create datasets if they don't exist
         if "mlx90640_frames" not in self.file:
@@ -313,6 +327,99 @@ class HDF5Storage:
             self.file.close()
             self.file = None
 
+    def _get_next_cycle_number(self, date_dir: Path) -> int:
+        """
+        Find the next available cycle number for a given date.
+
+        Args:
+            date_dir: Directory path containing cycle files (YYYYMM/DD/)
+
+        Returns:
+            int: Next cycle number (starting from 1)
+        """
+        if not date_dir.exists():
+            return 1
+
+        # Find existing files matching YYYYMMDD-*.h5 pattern
+        date_str = date_dir.parent.name + date_dir.name  # YYYYMMDD
+        existing_files = list(date_dir.glob(f"{date_str}-*.h5"))
+
+        if not existing_files:
+            return 1
+
+        # Extract cycle numbers from filenames
+        max_cycle = 0
+        for file_path in existing_files:
+            try:
+                # Extract NN from YYYYMMDD-NN.h5
+                cycle_str = file_path.stem.split("-")[1]
+                cycle_num = int(cycle_str)
+                max_cycle = max(max_cycle, cycle_num)
+            except (IndexError, ValueError):
+                continue
+
+        return max_cycle + 1
+
+    def rotate_file(self):
+        """
+        Close current file and move it to archive directory structure.
+        Creates new file for next combustion cycle.
+        """
+        if self.file is None:
+            return
+
+        # Close current file
+        self.close()
+
+        # Get current timestamp for directory structure
+        now = datetime.now()
+        month_dir = self.base_dir / now.strftime("%Y%m")
+        day_dir = month_dir / now.strftime("%d")
+
+        # Create directory structure if needed
+        day_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get next cycle number
+        cycle_num = self._get_next_cycle_number(day_dir)
+
+        # Build new filename: YYYYMMDD-NN.h5
+        date_str = now.strftime("%Y%m%d")
+        new_filename = day_dir / f"{date_str}-{cycle_num:02d}.h5"
+
+        # Move current file to archive location
+        current_path = Path(self.current_filename)
+        if current_path.exists():
+            shutil.move(str(current_path), str(new_filename))
+            logger.info(f"Rotated file: {current_path} -> {new_filename}")
+
+        # Open new file with temporary name in base directory
+        temp_filename = self.base_dir / "thermal_data_current.h5"
+        self.current_filename = str(temp_filename)
+        self.open()
+
+    def check_rotation(self, combustion_time: int) -> bool:
+        """
+        Check if file should be rotated based on combustion time reset.
+
+        Args:
+            combustion_time: Current combustion time in seconds
+
+        Returns:
+            bool: True if rotation occurred
+        """
+        # Detect reset: combustion_time drops significantly from previous value
+        if self.last_combustion_time is not None:
+            if combustion_time < self.last_combustion_time - 10:  # Allow some jitter
+                logger.info(
+                    f"Combustion time reset detected: {self.last_combustion_time}s -> {combustion_time}s"
+                )
+                self.rotate_file()
+                self.last_combustion_time = combustion_time
+                return True
+
+        self.last_combustion_time = combustion_time
+        return False
+
 
 class StoveLinkService:
     """
@@ -325,7 +432,7 @@ class StoveLinkService:
         mqtt_port: int,
         input_topic: str,
         output_topic: str,
-        hdf5_file: str,
+        hdf5_dir: str,
         username: Optional[str] = None,
         password: Optional[str] = None,
         diagnostic_topic: Optional[str] = None,
@@ -340,7 +447,7 @@ class StoveLinkService:
 
         self.decoder = StoveLinkDecoder()
         self.image_generator = ThermalImageGenerator()
-        self.storage = HDF5Storage(hdf5_file)
+        self.storage = HDF5Storage(hdf5_dir)
 
         self.mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         if username and password:
@@ -407,6 +514,9 @@ class StoveLinkService:
 
             logger.info(f"Processed packet #{self.packet_count} (seq: {decoded['sequence_id']})")
 
+            # Check for file rotation (combustion time reset)
+            self.storage.check_rotation(decoded["combustion_time"])
+
             # Store in HDF5
             self.storage.store_packet(decoded)
 
@@ -444,7 +554,11 @@ def main():
     parser.add_argument(
         "--output-topic", required=True, help="MQTT topic to publish thermal images"
     )
-    parser.add_argument("--hdf5-file", required=True, help="HDF5 file for data storage")
+    parser.add_argument(
+        "--hdf5-dir",
+        required=True,
+        help="Base directory for HDF5 data storage (files will be organized in YYYYMM/DD subdirectories)",
+    )
     parser.add_argument(
         "--diagnostic-topic",
         default=None,
@@ -460,7 +574,7 @@ def main():
         input_topic=args.input_topic,
         output_topic=args.output_topic,
         diagnostic_topic=args.diagnostic_topic,
-        hdf5_file=args.hdf5_file,
+        hdf5_dir=args.hdf5_dir,
         username=args.username,
         password=args.password,
     )

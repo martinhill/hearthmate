@@ -22,6 +22,8 @@ class VentFunctionABC():
     def __init__(self, time_range=30*60, time_func=time.time):
         self.time_range = time_range
         self.time_func = time_func
+        self.start_time = 0
+        self.time_adjustment = 0
 
     def start(self, vent_current_position):
         self.start_time = self.time_func()
