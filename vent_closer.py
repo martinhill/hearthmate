@@ -22,7 +22,7 @@ class VentFunctionABC():
     def __init__(self, time_range=30*60, time_func=time.time):
         self.time_range = time_range
         self.time_func = time_func
-        self.start_time = 0
+        self.start_time = None
         self.time_adjustment = 0
 
     def start(self, vent_current_position):
@@ -40,10 +40,14 @@ class VentFunctionABC():
 
     def get_elapsed_time(self):
         "Get time since start() was called, un-adjusted"
+        if self.start_time is None:
+            return 0
         return self.time_func() - self.start_time
 
     def get_adjusted_time(self):
         "Get adjusted elapsed time since start in range of 0 to time_range"
+        if self.start_time is None:
+            return 0
         elapsed_time = self.time_func() + self.time_adjustment - self.start_time
         # logger.debug("Function elapsed_time=%d", elapsed_time)
         return elapsed_time
