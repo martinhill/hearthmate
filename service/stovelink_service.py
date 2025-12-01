@@ -256,6 +256,7 @@ class HDF5Storage:
         # Ensure base directory exists
         self.base_dir.mkdir(parents=True, exist_ok=True)
         # Initial file is in the base directory
+        self.initial_filename = initial_filename
         self.current_filename = str(self.base_dir / initial_filename)
         self.file: Optional[h5py.File] = None
         self.last_combustion_time: Optional[int] = None
@@ -393,7 +394,7 @@ class HDF5Storage:
             logger.info(f"Rotated file: {current_path} -> {new_filename}")
 
         # Open new file with temporary name in base directory
-        temp_filename = self.base_dir / "thermal_data_current.h5"
+        temp_filename = self.base_dir / self.initial_filename
         self.current_filename = str(temp_filename)
         self.open()
 
