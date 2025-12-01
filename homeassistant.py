@@ -102,6 +102,17 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "camera_ok": {
+                    "name": "Camera OK",
+                    "p": "binary_sensor",
+                    "ent_cat": "diagnostic",
+                    "unique_id": f"{self.device_name}_camera_ok",
+                    "state_topic": f"{self.topic_prefix}/camera_ok/state",
+                    "icon": "mdi:camera",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "sequence_id": {
                     "name": "Stovelink Sequence",
                     "p": "sensor",
@@ -421,3 +432,6 @@ class HomeAssistant:
             if function:
                 duration = int(function.time_range / 60)
                 self.update_mqtt_state("duration/state", duration)
+
+    def update_camera_ok(self, ok):
+        self.update_mqtt_state("camera_ok/state", "ON" if ok else "OFF")

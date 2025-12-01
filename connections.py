@@ -50,7 +50,9 @@ class WiFiConnectionManager:
         if self.is_connected():
             # Reset counters on successful connection
             if self.connection_failures > 0:
-                logger.info("WiFi reconnected after %d failures", self.connection_failures)
+                logger.info(
+                    "WiFi reconnected after %d failures", self.connection_failures
+                )
                 self.connection_failures = 0
                 self.current_delay = self.base_delay
             return True
@@ -116,7 +118,9 @@ class MQTTConnectionManager:
         self.last_reconnect_attempt = 0
         self.mqtt_failures = 0
 
-    def attempt_reconnect(self, current_time: float, mqtt_exception_raised: bool) -> bool:
+    def attempt_reconnect(
+        self, current_time: float, mqtt_exception_raised: bool
+    ) -> bool:
         """
         Attempt MQTT reconnection only if WiFi is stable.
 
@@ -168,3 +172,95 @@ class MQTTConnectionManager:
             )
             self.current_delay = min(self.current_delay * 2, self.max_delay)
             return False
+
+
+class I2CDeviceRecoveryManager:
+    """
+    Manages I2C device recovery with exponential backoff.
+    Handles reconnection of I2C devices like thermal cameras after communication failures.
+    """
+
+    def __init__(
+        self, device_factory, device_name="I2C Device", base_delay=5, max_delay=300
+    ):
+        """
+        Initialize I2C device recovery manager.
+
+        Args:
+            device_factory: Callable that creates/reinitializes the I2C device
+            device_name: Human-readable device name for logging
+            base_delay: Initial backoff delay in seconds (default: 5)
+            max_delay: Maximum backoff delay in seconds (default: 300)
+        """
+        self.device_factory = device_factory
+        self.device_name = device_name
+        self.base_delay = base_delay
+        self.max_delay = max_delay
+        self.current_delay = base_delay
+        self.last_recovery_attempt = 0
+        self.recovery_failures = 0
+        self.device = None
+        self.error_count = 0
+
+    def report_error(self, error):
+        """
+        Report an error with the I2C device.
+
+        Args:
+            error: Exception that occurred during device operation
+        """
+        self.error_count += 1
+        logger.warning(
+            "%s error #%d: %s (errno=%s)",
+            self.device_name,
+            self.error_count,
+            error,
+            getattr(error, "errno", "unknown"),
+        )
+
+    def attempt_recovery(self, current_time):
+        """
+        Attempt to recover/reinitialize the I2C device.
+
+        Args:
+            current_time: Current time from time.monotonic()
+
+        Returns:
+            Device instance if recovery successful, None otherwise
+        """
+        # Check backoff period
+        if current_time - self.last_recovery_attempt < self.current_delay:
+            return None
+
+        self.last_recovery_attempt = current_time
+        self.recovery_failures += 1
+
+        try:
+            logger.info(
+                "Attempting %s recovery (failure #%d, delay: %ds)",
+                self.device_name,
+                self.recovery_failures,
+                self.current_delay,
+            )
+            self.device = self.device_factory()
+            logger.info("%s recovered successfully", self.device_name)
+            self.current_delay = self.base_delay
+            self.recovery_failures = 0
+            self.error_count = 0
+            return self.device
+
+        except (OSError, RuntimeError, Exception) as e:
+            logger.error(
+                "%s recovery failed (attempt %d): %s. Retry in %ds",
+                self.device_name,
+                self.recovery_failures,
+                e,
+                self.current_delay,
+            )
+            self.current_delay = min(self.current_delay * 2, self.max_delay)
+            return None
+
+    def reset_error_count(self):
+        """Reset error count after successful operation"""
+        if self.error_count > 0:
+            self.error_count = 0

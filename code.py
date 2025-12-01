@@ -17,6 +17,7 @@ from logging import MQTTHandler, FileHandler
 from connections import (
     WiFiConnectionManager,
     MQTTConnectionManager,
+    I2CDeviceRecoveryManager,
     logger as conn_logger,
 )
 from homeassistant import HomeAssistant, logger as ha_logger
@@ -233,6 +234,67 @@ def get_combustion_time(machine: StateMachine) -> int:
             return int(max(0, elapsed))
     return 0
 
+def do_thermal_camera_stuff(camera_exception_raised):
+    """
+    Do all the thermal camera stuff here to keep the main loop clean.
+    Returns True if successful, False if camera recovery is needed.
+    """
+    global thermal_camera, ha, mqtt_client, vent, stovelink_encoder, machine, mqtt_topic
+
+    if camera_exception_raised:
+        recovered_camera = thermal_recovery.attempt_recovery(current_time)
+        if recovered_camera:
+            thermal_camera = recovered_camera
+            logger.info("Thermal camera recovered and operational")
+            ha.update_camera_ok(True)
+            # Successful capture - reset error count
+            thermal_recovery.reset_error_count()
+            camera_exception_raised = False
+        else:
+            return False
+
+    camera_start_time = time.monotonic()
+    frame = thermal_camera.capture_frame()
+    if frame:
+        # Calculate temperature statistics
+        stats_start_time = time.monotonic()
+        np_frame = thermal_camera.get_np_frame()
+        stats = thermal_camera.get_temperature_statistics(np_frame)
+
+        # Validate stats to filter out erroneous readings
+        if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
+            # Stats are valid - publish image and statistics
+
+            # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
+            stovelink_start = time.monotonic()
+            vent_position = vent.get_position()
+            combustion_time = get_combustion_time(machine)
+            stovelink_packet = stovelink_encoder.encode_packet(
+                np_frame, vent_position, combustion_time
+            )
+            mqtt_client.publish(
+                mqtt_topic + "/stovelink", stovelink_packet
+            )
+
+            camera_end_time = time.monotonic()
+            stovelink_time = camera_end_time - stovelink_start
+            camera_process_time = camera_end_time - camera_start_time
+            capture_time = stats_start_time - camera_start_time
+            stats_calc_time = stovelink_start - stats_start_time
+            logger.debug(
+                "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
+                stats["min"],
+                stats["max"],
+                stats["mean"],
+                stats["median"],
+                camera_process_time,
+                capture_time,
+                stats_calc_time,
+                stovelink_time,
+            )
+            ha.update_thermal_statistics(stats)
+    return True
+
 
 if __name__ == "__main__":
 
@@ -276,9 +338,23 @@ if __name__ == "__main__":
     machine = init_state_machine(mqtt_client, hardware, vent)
 
     # Initialize thermal camera and StoveLink encoder
-    thermal_camera = get_thermal_camera(hardware.i2c)
+    thermal_camera = get_thermal_camera(hardware.i2c, allow_mock=True)
     stovelink_encoder = StoveLinkEncoder()
     last_camera_update = 0
+
+    # Initialize thermal camera recovery manager
+    def thermal_camera_factory():
+        # return get_thermal_camera(hardware.i2c, allow_mock=False)
+        thermal_camera.reinitialize()
+        return thermal_camera
+
+    thermal_recovery = I2CDeviceRecoveryManager(
+        thermal_camera_factory,
+        device_name="MLX90640 Thermal Camera",
+        base_delay=5,
+        max_delay=300,
+    )
+    thermal_recovery.device = thermal_camera
 
     # Attempt initial MQTT connection
     try:
@@ -307,11 +383,13 @@ if __name__ == "__main__":
 
     encoder_status = check_encoder(hardware)
     ha.send_encoder_status(*encoder_status)
+    ha.update_camera_ok(True)
     machine.set_state("idle")
     logger.info("Starting main loop")
 
     # Main loop
     mqtt_exception_raised = False
+    camera_exception_raised = False
     while True:
         current_time = time.monotonic()
 
@@ -333,47 +411,20 @@ if __name__ == "__main__":
 
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
-                camera_start_time = time.monotonic()
-                frame = thermal_camera.capture_frame()
-                if frame:
-                    # Calculate temperature statistics
-                    stats_start_time = time.monotonic()
-                    np_frame = thermal_camera.get_np_frame()
-                    stats = thermal_camera.get_temperature_statistics(np_frame)
-                    # stats = thermal_camera.get_temperature_statistics(frame)
 
-                    # Validate stats to filter out erroneous readings
-                    if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
-                        # Stats are valid - publish image and statistics
+                try:
+                    if do_thermal_camera_stuff(camera_exception_raised):
+                        camera_exception_raised = False
+                    last_camera_update = current_time
 
-                        # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
-                        stovelink_start = time.monotonic()
-                        vent_position = vent.get_position()
-                        combustion_time = get_combustion_time(machine)
-                        stovelink_packet = stovelink_encoder.encode_packet(
-                            np_frame, vent_position, combustion_time
-                        )
-                        mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
-
-                        camera_end_time = time.monotonic()
-                        stovelink_time = camera_end_time - stovelink_start
-                        camera_process_time = camera_end_time - camera_start_time
-                        capture_time = stats_start_time - camera_start_time
-                        stats_calc_time = stovelink_start - stats_start_time
-                        logger.debug(
-                            "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
-                            stats["min"],
-                            stats["max"],
-                            stats["mean"],
-                            stats["median"],
-                            camera_process_time,
-                            capture_time,
-                            stats_calc_time,
-                            stovelink_time,
-                        )
-                        ha.update_thermal_statistics(stats)
-                    # If invalid, validate_thermal_stats already logged the warning
-                last_camera_update = current_time
+                except OSError as e:
+                    # I2C communication error with thermal camera (e.g., errno 32: broken pipe)
+                    thermal_recovery.report_error(e)
+                    ha.update_camera_ok(False)
+                    last_camera_update = (
+                        current_time - THERMAL_CAMERA_INTERVAL + 1 # Update time to prevent rapid retries
+                    )
+                    camera_exception_raised = True
 
         except MMQTTException as e:
             # Log but don't try to reconnect here - let managers handle it
@@ -382,6 +433,7 @@ if __name__ == "__main__":
             hardware.led_on()
             mqtt_exception_raised = True
         except OSError as e:
+            # Network/IO errors not related to thermal camera
             mqtt_logger.error("Network/IO error during state update: %s", e)
             hardware.led_on()
         # except Exception as e:
