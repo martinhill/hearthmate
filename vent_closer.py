@@ -119,8 +119,9 @@ class Override(State):
     """Wait for externally-actuated motion to stop.
     """
 
-    def __init__(self, sensitivity = 0.005, settle_time = 3.0):
+    def __init__(self, open_position_threshold = 0.1, sensitivity = 0.005, settle_time = 3.0):
         super().__init__("override")
+        self.open_position_threshold = open_position_threshold
         self.sensitivity = sensitivity
         self.settle_time = settle_time
 
@@ -149,8 +150,14 @@ class Override(State):
             # No movement ovserved for the settling time
             func = machine.data["function"]
             position = vent.get_position()
-            func.adjust(position)
-            logger.info("Override: adjusted function to position %.3f", position)
+            if machine.data["vent_closed"] and position < self.open_position_threshold:
+                # Vent moved open - reset function to start
+                func.start(position)
+                machine.data["vent_closed"] = False
+                logger.info("Override: vent moved open - reset function to start")
+            else:
+                func.adjust(position)
+                logger.info("Override: adjusted function to position %.3f", position)
             machine.set_state("monitoring")
 
 
@@ -209,7 +216,10 @@ class Closed(State):
         steps, direction, encoder, revs = vent.move_to_position(1.0)
         # brute force
         hardware.close_vent(steps + self.extra_steps)
-        self.last_position = 1.0
+        time.sleep(0.1)
+        vent.update_from_hardware(hardware.read_raw_angle())
+        self.last_position = vent.get_position()
+        machine.data["vent_closed"] = True
         logger.info("Closed")
 
     def update(self, machine):
@@ -221,11 +231,9 @@ class Closed(State):
         # Check MQTT when vent position is stable
         if abs(vent_position - self.last_position) < self.sensitivity:
             machine.mqtt_loop()
-        self.last_position = vent_position
-        if abs(vent_position - self.last_position) > 0.01:
-            # Log movements
-            logger.debug("Closed: vent_position=%.3f", vent_position)
-            self.last_position = vent_position
+        if vent_position < self.last_position - 0.01:
+            # Vent is moving open
+            machine.set_state("override")
         if vent_position < self.open_position_threshold:
             func = machine.data["function"]
             func.start(vent_position)
@@ -253,6 +261,7 @@ class VentCloser(State):
         self.machine.add_state(Closing())
         self.machine.add_state(Closed())
         self.machine.data["function"] = function
+        self.machine.data["vent_closed"] = False
 
     def handle_move_request(self, machine, target_position):
         # Deligate to sub-states

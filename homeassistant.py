@@ -173,7 +173,7 @@ class HomeAssistant:
                     "device_class": "duration",
                     "unit_of_meas": "minutes",
                     "min": 5,
-                    "max": 120,
+                    "max": 60,
                     "avty": [
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
