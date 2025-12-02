@@ -15,7 +15,8 @@ ExecStart=/opt/stovelink/.venv/bin/python3 -m stovelink_service \
     --username stovelink \
     --password stovelink \
     --input-topic burnie/stovelink \
-    --output-topic burnie/thermal_camera \
+    --dynamic-topic burnie/thermal_camera/dynamic \
+    --static-topic burnie/thermal_camera/static \
     --diagnostic-topic burnie/service/state \
     --hdf5-dir /mnt/burnie
 Restart=on-failure

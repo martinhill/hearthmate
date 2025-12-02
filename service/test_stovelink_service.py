@@ -192,9 +192,46 @@ class TestThermalImageGenerator:
             print(f"✗ Base64 decoding failed: {e}")
             raise
 
+    def test_fixed_temperature_range(self):
+        """Test fixed min/max temperature range"""
+        print("\n=== Test 7: Fixed Temperature Range ===")
+        self.test_count += 1
+
+        # Create generator with fixed range 0-100°C
+        fixed_generator = ThermalImageGenerator(width=32, height=24, min_temp=0.0, max_temp=100.0)
+
+        # Create frame with temperatures outside the fixed range
+        frame = np.ones((24, 32), dtype=np.float32) * 200.0  # All pixels 200°C
+
+        # Generate RGB with fixed range
+        rgb_fixed = fixed_generator.frame_to_rgb(frame)
+
+        # Generate RGB with dynamic range (should be all white since all same temp)
+        rgb_dynamic = self.generator.frame_to_rgb(frame)
+
+        print(f"Frame temperature: {frame[0, 0]:.1f}°C")
+        print(f"Fixed range: 0-100°C")
+        print(f"Dynamic range: {frame.min():.1f}-{frame.max():.1f}°C")
+
+        # With fixed range 0-100, 200°C should map to max (1.0 normalized)
+        # In ironbow, max temp is red
+        avg_r_fixed = np.mean(rgb_fixed[:, :, 0])
+        avg_g_fixed = np.mean(rgb_fixed[:, :, 1])
+        avg_b_fixed = np.mean(rgb_fixed[:, :, 2])
+
+        print(f"Fixed range RGB avg: R={avg_r_fixed:.1f}, G={avg_g_fixed:.1f}, B={avg_b_fixed:.1f}")
+
+        # Should be red (high R, low G/B)
+        assert avg_r_fixed > 200, "Fixed range should produce red colors for high temp"
+        assert avg_g_fixed < 100, "Fixed range should have low green"
+        assert avg_b_fixed < 100, "Fixed range should have low blue"
+
+        print("✓ Fixed temperature range test passed")
+        self.passed_count += 1
+
     def test_stovelink_decoder_integration(self):
         """Test integration with StoveLinkDecoder"""
-        print("\n=== Test 7: StoveLink Decoder Integration ===")
+        print("\n=== Test 8: StoveLink Decoder Integration ===")
         self.test_count += 1
 
         decoder = StoveLinkDecoder()
@@ -258,6 +295,7 @@ class TestThermalImageGenerator:
             self.test_ironbow_colormap()
             self.test_encode_bmp()
             self.test_base64_encoding()
+            self.test_fixed_temperature_range()
             self.test_stovelink_decoder_integration()
 
             print("\n" + "=" * 60)

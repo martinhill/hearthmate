@@ -190,10 +190,20 @@ class HomeAssistant:
                     ],
                 },
                 "thermal_camera": {
-                    "name": "Thermal Camera",
+                    "name": "Thermal Camera DR",
                     "p": "camera",
-                    "unique_id": f"{self.device_name}_thermal_camera",
-                    "topic": f"{self.topic_prefix}/thermal_camera",
+                    "unique_id": f"{self.device_name}_thermal_camera/dynamic",
+                    "topic": f"{self.topic_prefix}/thermal_camera/dynamic",
+                    "image_encoding": "b64",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "thermal_camera_static": {
+                    "name": "Thermal Camera SR",
+                    "p": "camera",
+                    "unique_id": f"{self.device_name}_thermal_camera/static",
+                    "topic": f"{self.topic_prefix}/thermal_camera/static",
                     "image_encoding": "b64",
                     "avty": [
                         {"topic": f"{self.topic_prefix}/status"},

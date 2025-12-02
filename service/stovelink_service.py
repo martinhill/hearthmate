@@ -13,7 +13,7 @@ a new firing cycle). Completed files are organized in YYYYMM/DD subdirectories w
 filenames in the format YYYYMMDD-NN.h5 where NN is the cycle number.
 
 Usage:
-    python3 stovelink_service.py --mqtt-host localhost --input-topic stovelink/data --output-topic homeassistant/camera/thermal/image --hdf5-dir /data/thermal
+    python3 stovelink_service.py --mqtt-host localhost --input-topic stovelink/data --dynamic-topic homeassistant/camera/thermal/dynamic --static-topic homeassistant/camera/thermal/static --hdf5-dir /data/thermal
 
 Dependencies:
     - paho-mqtt: MQTT client
@@ -101,9 +101,11 @@ class ThermalImageGenerator:
     Based on thermal_camera.py implementation but optimized for numpy.
     """
 
-    def __init__(self, width=32, height=24):
+    def __init__(self, width=32, height=24, min_temp=None, max_temp=None):
         self.width = width
         self.height = height
+        self.fixed_min_temp = min_temp
+        self.fixed_max_temp = max_temp
 
     def frame_to_rgb(self, frame: np.ndarray, colormap="ironbow") -> np.ndarray:
         """
@@ -122,8 +124,13 @@ class ThermalImageGenerator:
         # Flip frame horizontally (left-right) to correct sensor encoding
         frame_flipped = np.fliplr(frame)
 
-        min_temp = np.min(frame_flipped)
-        max_temp = np.max(frame_flipped)
+        if self.fixed_min_temp is not None and self.fixed_max_temp is not None:
+            min_temp = self.fixed_min_temp
+            max_temp = self.fixed_max_temp
+        else:
+            min_temp = np.min(frame_flipped)
+            max_temp = np.max(frame_flipped)
+
         temp_range = max_temp - min_temp
 
         if temp_range < 0.1:
@@ -432,7 +439,10 @@ class StoveLinkService:
         mqtt_host: str,
         mqtt_port: int,
         input_topic: str,
-        output_topic: str,
+        dynamic_topic: str,
+        static_topic: str,
+        static_min_temp: float,
+        static_max_temp: float,
         hdf5_dir: str,
         username: Optional[str] = None,
         password: Optional[str] = None,
@@ -441,13 +451,17 @@ class StoveLinkService:
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
         self.input_topic = input_topic
-        self.output_topic = output_topic
+        self.dynamic_topic = dynamic_topic
+        self.static_topic = static_topic
         self.diagnostic_topic = diagnostic_topic
         self.username = username
         self.password = password
 
         self.decoder = StoveLinkDecoder()
-        self.image_generator = ThermalImageGenerator()
+        self.dynamic_image_generator = ThermalImageGenerator()
+        self.static_image_generator = ThermalImageGenerator(
+            min_temp=static_min_temp, max_temp=static_max_temp
+        )
         self.storage = HDF5Storage(hdf5_dir)
 
         self.mqtt_client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
@@ -521,9 +535,17 @@ class StoveLinkService:
             # Store in HDF5
             self.storage.store_packet(decoded)
 
-            # Generate and publish image
-            base64_image = self.image_generator.get_base64_image(decoded["thermal_frame"])
-            client.publish(self.output_topic, base64_image, qos=1, retain=True)
+            # Generate and publish dynamic range image
+            dynamic_base64_image = self.dynamic_image_generator.get_base64_image(
+                decoded["thermal_frame"]
+            )
+            client.publish(self.dynamic_topic, dynamic_base64_image, qos=0, retain=False)
+
+            # Generate and publish static range image
+            static_base64_image = self.static_image_generator.get_base64_image(
+                decoded["thermal_frame"]
+            )
+            client.publish(self.static_topic, static_base64_image, qos=0, retain=False)
 
             if self.diagnostic_topic:
                 diagnostics = {
@@ -532,7 +554,7 @@ class StoveLinkService:
                 }
                 client.publish(self.diagnostic_topic, json.dumps(diagnostics))
 
-            logger.debug(f"Published image to topic: {self.output_topic}")
+            logger.debug(f"Published images to topics: {self.dynamic_topic}, {self.static_topic}")
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
@@ -553,7 +575,22 @@ def main():
         "--input-topic", required=True, help="MQTT topic to subscribe for StoveLink data"
     )
     parser.add_argument(
-        "--output-topic", required=True, help="MQTT topic to publish thermal images"
+        "--dynamic-topic", required=True, help="MQTT topic to publish dynamic range thermal images"
+    )
+    parser.add_argument(
+        "--static-topic", required=True, help="MQTT topic to publish static range thermal images"
+    )
+    parser.add_argument(
+        "--static-min-temp",
+        type=float,
+        default=100.0,
+        help="Minimum temperature for static range images (default: 100)",
+    )
+    parser.add_argument(
+        "--static-max-temp",
+        type=float,
+        default=350.0,
+        help="Maximum temperature for static range images (default: 350)",
     )
     parser.add_argument(
         "--hdf5-dir",
@@ -573,7 +610,10 @@ def main():
         mqtt_host=args.mqtt_host,
         mqtt_port=args.mqtt_port,
         input_topic=args.input_topic,
-        output_topic=args.output_topic,
+        dynamic_topic=args.dynamic_topic,
+        static_topic=args.static_topic,
+        static_min_temp=args.static_min_temp,
+        static_max_temp=args.static_max_temp,
         diagnostic_topic=args.diagnostic_topic,
         hdf5_dir=args.hdf5_dir,
         username=args.username,
