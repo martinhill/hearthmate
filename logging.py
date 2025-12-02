@@ -49,7 +49,7 @@ class FileHandler(Handler):
     def __init__(self, log_dir: str = "logs") -> None:
         """
         Initialize FileHandler with auto-incrementing log file.
-        
+
         Args:
             log_dir: Directory to store log files (default: "logs")
         """
@@ -57,14 +57,15 @@ class FileHandler(Handler):
         self._log_dir = log_dir
         self._file = None
         self.level = NOTSET
-        
+        self._repeat_data = {}  # key: (logger_name, level), value: {'last_msg': str, 'count': int, 'threshold': int}
+
         # Create logs directory if it doesn't exist
         try:
             os.mkdir(log_dir)
         except OSError:
             # Directory already exists or other error, continue
             pass
-        
+
         # Find the next log file number
         self._log_number = self._get_next_log_number()
         self._open_log_file()
@@ -76,11 +77,13 @@ class FileHandler(Handler):
         """
         try:
             files = os.listdir(self._log_dir)
-            log_files = [f for f in files if f.startswith("log_") and f.endswith(".txt")]
-            
+            log_files = [
+                f for f in files if f.startswith("log_") and f.endswith(".txt")
+            ]
+
             if not log_files:
                 return 0
-            
+
             # Extract numbers and find the maximum
             numbers = []
             for f in log_files:
@@ -89,7 +92,7 @@ class FileHandler(Handler):
                     numbers.append(num)
                 except ValueError:
                     continue
-            
+
             return max(numbers) + 1 if numbers else 0
         except (OSError, ImportError):
             return 0
@@ -106,15 +109,31 @@ class FileHandler(Handler):
 
     def emit(self, record: LogRecord) -> None:
         """
-        Write the log record to the file.
+        Write the log record to the file, with repeat message detection.
         """
         if self._file is None:
             return
-        
+
         try:
             msg = self.format(record)
-            self._file.write(msg + "\n")
-            self._file.flush()
+            key = (record.name, record.levelno)
+            if key not in self._repeat_data:
+                self._repeat_data[key] = {"last_msg": None, "count": 0, "threshold": 4}
+            data = self._repeat_data[key]
+
+            if msg == data["last_msg"]:
+                data["count"] += 1
+                if data["count"] >= data["threshold"]:
+                    repeated_msg = f"{msg} (repeated {data['count']} times)"
+                    self._file.write(repeated_msg + "\n")
+                    self._file.flush()
+                    data["threshold"] *= 2
+                    data["count"] = 0
+            else:
+                self._file.write(msg + "\n")
+                self._file.flush()
+                data["last_msg"] = msg
+                data["count"] = 0
         except (OSError, IOError):
             pass
 
