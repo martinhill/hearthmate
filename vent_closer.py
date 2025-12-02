@@ -147,15 +147,18 @@ class Override(State):
 
         # Override detection
         vent.update_from_hardware(hardware.read_raw_angle())
-        displacement = vent.get_position() - self.vent_position
+        position = vent.get_position()
+        displacement = position - self.vent_position
         if abs(displacement) > self.sensitivity:
-            # Movement observed
+            # Movement observed - update vent position and indicate vent is open if it is
             self.last_check_time = time.time()
-            self.vent_position = vent.get_position()
+            self.vent_position = position
+            if position < self.open_position_threshold:
+                # Indicate vent is open
+                hardware.set_pixel_color((0, 64, 64))  # teal
         elif time.time() - self.last_check_time > self.settle_time:
             # No movement ovserved for the settling time
             func = machine.data["function"]
-            position = vent.get_position()
             if machine.data["vent_closed"] and position < self.open_position_threshold:
                 # Vent moved open - reset function to start
                 func.start(position)
