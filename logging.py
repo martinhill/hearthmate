@@ -115,24 +115,24 @@ class FileHandler(Handler):
             return
 
         try:
-            msg = self.format(record)
             key = (record.name, record.levelno)
             if key not in self._repeat_data:
-                self._repeat_data[key] = {"last_msg": None, "count": 0, "threshold": 4}
+                self._repeat_data[key] = {"last_msg": None, "last_args": None, "count": 0, "threshold": 4}
             data = self._repeat_data[key]
 
-            if msg == data["last_msg"]:
+            if record.msg == data["last_msg"] and record.args == data["last_args"]:
                 data["count"] += 1
                 if data["count"] >= data["threshold"]:
-                    repeated_msg = f"{msg} (repeated {data['count']} times)"
-                    self._file.write(repeated_msg + "\n")
+                    message = self.format(record)
+                    self._file.write(f"{message} (repeated {data['count']} times)\n")
                     self._file.flush()
                     data["threshold"] *= 2
                     data["count"] = 0
             else:
-                self._file.write(msg + "\n")
+                self._file.write(self.format(record) + "\n")
                 self._file.flush()
-                data["last_msg"] = msg
+                data["last_msg"] = record.msg
+                data["last_args"] = record.args
                 data["count"] = 0
         except (OSError, IOError):
             pass
