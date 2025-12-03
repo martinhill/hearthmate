@@ -42,10 +42,10 @@ class MoveVentState(State):
         if steps > self.min_steps and self.update_counter > 0:
             # Move a small amount to avoid blocking main loop too long
             chunk = min(steps, self.move_chunk) + self.overshoot
-            if direction: # Open (FORWARD)
+            if direction == vent.DIR_OPEN: # Open (FORWARD)
                 logger.info("MoveVentState: opening %d steps, counter=%d", steps, self.update_counter)
                 hardware.open_vent(chunk)
-            else: # Close (BACKWARD)
+            elif direction == vent.DIR_CLOSE: # Close (BACKWARD)
                 logger.info("MoveVentState: closing %d steps, counter=%d", steps, self.update_counter)
                 hardware.close_vent(chunk)
 

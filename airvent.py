@@ -22,6 +22,9 @@ class Vent:
     inferred from the encoder raw angle position. 0.0 is fully open, 1.0 is fully closed.
     """
 
+    DIR_OPEN = 0
+    DIR_CLOSE = 1
+
     ## Calibrated values
 
     # The AS5600 encoder raw angle position when the air vent is fully open
@@ -157,10 +160,10 @@ class Vent:
 
         # Determine direction: positive angle_difference means we need to go counterclockwise (close, BACKWARD)
         if angle_difference < 0:
-            direction = 1  # BACKWARD (closing)
+            direction = self.DIR_OPEN  # BACKWARD (opening)
             encoder_delta = -angle_difference
         else:
-            direction = 0  # FORWARD (opening)
+            direction = self.DIR_CLOSE  # FORWARD (opening)
             encoder_delta = angle_difference
 
         # Convert encoder delta to motor steps

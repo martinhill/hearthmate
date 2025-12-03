@@ -195,9 +195,9 @@ class Closing(State):
             steps, direction, encoder, revs = vent.move_to_position(self.ideal_position)
             logger.debug("ideal_position=%.3f, steps=%d, direction=%d", self.ideal_position, steps, direction)
             if steps > self.min_steps:
-                if direction:
+                if direction == vent.DIR_OPEN:
                     hardware.open_vent(steps + self.overshoot)
-                else:
+                elif direction == vent.DIR_CLOSE:
                     hardware.close_vent(steps + self.overshoot)
             else:
                 machine.set_state("monitoring")
