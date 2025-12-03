@@ -211,9 +211,8 @@ class I2CDeviceRecoveryManager:
         """
         self.error_count += 1
         logger.warning(
-            "%s error #%d: %s (errno=%s)",
+            "%s error: %s (errno=%s)",
             self.device_name,
-            self.error_count,
             error,
             getattr(error, "errno", "unknown"),
         )

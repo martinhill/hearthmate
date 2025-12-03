@@ -6,6 +6,7 @@ import adafruit_minimqtt.adafruit_minimqtt as MQTT
 class MQTTHandler(Handler):
     """
     Log handler that emits log records as MQTT PUBLISH messages.
+    Can be suspended and resumed to prevent publishing log records during MQTT errors.
     """
 
     def __init__(self, mqtt_client: MQTT.MQTT, topic: str) -> None:
@@ -16,7 +17,7 @@ class MQTTHandler(Handler):
 
         self._mqtt_client = mqtt_client
         self._topic = topic
-
+        self._suspended = False
         # To make it work also in CPython.
         self.level = NOTSET
 
@@ -25,7 +26,7 @@ class MQTTHandler(Handler):
         Publish message from the LogRecord to the MQTT broker, if connected.
         """
         try:
-            if self._mqtt_client.is_connected():
+            if self._mqtt_client.is_connected() and not self._suspended:
                 self._mqtt_client.publish(self._topic, self.format(record))
         except MQTT.MMQTTException:
             pass
@@ -38,6 +39,18 @@ class MQTTHandler(Handler):
         Handle the log record. Here, it means just emit.
         """
         self.emit(record)
+    
+    def suspend(self) -> None:
+        """
+        Suspend the MQTT handler.
+        """
+        self._suspended = True
+    
+    def resume(self) -> None:
+        """
+        Resume the MQTT handler.
+        """
+        self._suspended = False
 
 
 class FileHandler(Handler):

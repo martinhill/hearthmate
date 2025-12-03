@@ -2,6 +2,7 @@ import os
 import json
 import wifi
 import adafruit_logging as logging
+from adafruit_minimqtt.adafruit_minimqtt import MMQTTStateError
 
 try:
     from typing import Callable
@@ -273,12 +274,19 @@ class HomeAssistant:
 
         return {"topic": discovery_topic, "message": discovery_json}
 
+    def publish(self, topic, message):
+        "Publish a message to an MQTT topic, handling MMQTTStateErrors"
+        try:
+            self.mqtt_client.publish(topic, message)
+        except MMQTTStateError as e:
+            logger.warning("MMQTTStateError during MQTT publication: %s", e)
+
     def ha_status(self, message):
         if message == "online":
             # Resend discovery
             discovery = self.mqtt_discovery()
-            self.mqtt_client.publish(discovery["topic"], discovery["message"])
-            self.mqtt_client.publish(self.topic_prefix + "/status", "online")
+            self.publish(discovery["topic"], discovery["message"])
+            self.publish(self.topic_prefix + "/status", "online")
 
     def set_air_vent(self, message):
         "Attempt to move the air vent to the requested position"
@@ -318,13 +326,13 @@ class HomeAssistant:
     def send_encoder_status(self, status_md, status_ml, status_mh):
         """Update encoder_magnet_detected, encoder_magnet_weak, and encoder_magnet_strong components"""
         state_string = lambda value: "ON" if value else "OFF"
-        self.mqtt_client.publish(
+        self.publish(
             f"{self.topic_prefix}/encoder_md/state", state_string(status_md)
         )
-        self.mqtt_client.publish(
+        self.publish(
             f"{self.topic_prefix}/encoder_ml/state", state_string(status_ml)
         )
-        self.mqtt_client.publish(
+        self.publish(
             f"{self.topic_prefix}/encoder_mh/state", state_string(status_mh)
         )
 
@@ -334,7 +342,7 @@ class HomeAssistant:
     def update_mqtt_state(self, topic, value):
         "Send a single state update on a topic only if it changed since last"
         if self.saved_values.get(topic) != value:
-            self.mqtt_client.publish(f"{self.topic_prefix}/{topic}", str(value))
+            self.publish(f"{self.topic_prefix}/{topic}", str(value))
             self.saved_values[topic] = value
 
     def update_thermal_camera(self, base64_image):
@@ -345,7 +353,7 @@ class HomeAssistant:
             base64_image: Base64-encoded image data
         """
         try:
-            self.mqtt_client.publish(
+            self.publish(
                 f"{self.topic_prefix}/thermal_camera", base64_image
             )
         except Exception as e:

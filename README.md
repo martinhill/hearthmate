@@ -26,6 +26,7 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
 - Enumeration for direction in Vent class
 - TMP36 temp -> stovelink
+- detect home assistant restart and update all components
 - Back-off logic based on camera data
 - stovelink seq num, burn time, and other state info recovery after reboot: use mqtt retain
 - Add HA diagnostic entity to track motor step slippage % over movement from open->closed: 
