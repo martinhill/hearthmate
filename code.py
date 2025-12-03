@@ -387,6 +387,7 @@ if __name__ == "__main__":
     # Main loop
     mqtt_exception_raised = False
     camera_exception_raised = False
+    oserror_exception_raised: set[str] = set()
     while True:
         current_time = time.monotonic()
 
@@ -433,6 +434,12 @@ if __name__ == "__main__":
             # Network/IO errors not related to thermal camera
             mqtt_logger.error("Network/IO error during state update: %s", e)
             hardware.led_on()
+            # Log the stack trace exactly once
+            if str(e) not in oserror_exception_raised:
+                import traceback
+                stack_trace = traceback.format_exception(e, chain=True)
+                mqtt_logger.error("OSError stack trace: %s\n%s", str(e), stack_trace)
+                oserror_exception_raised.add(str(e))
         # except Exception as e:
         #     mqtt_logger.error("Unexpected error in main loop: %s", e)
 
