@@ -19,6 +19,7 @@ discovery_prefix_default = os.getenv("HA_DISCOVERY_PREFIX", "homeassistant")
 
 
 class HomeAssistant:
+
     def __init__(
         self,
         machine: StateMachine,
@@ -38,6 +39,7 @@ class HomeAssistant:
         self.closed_threshold = closed_threshold
         self.last_thermal_stats = None
         self.measurement_buffer = MeasurementBuffer(measurement_buffer_interval)
+        self.refresh_discovery = False
 
         # Use temporary Vent to determine the number of motor steps from open to closed
         # so we can match this to the range for the Home Assistant Valve integration
@@ -283,10 +285,10 @@ class HomeAssistant:
 
     def ha_status(self, message):
         if message == "online":
-            # Resend discovery
-            discovery = self.mqtt_discovery()
-            self.publish(discovery["topic"], discovery["message"])
-            self.publish(self.topic_prefix + "/status", "online")
+            # Prepare to resend discovery
+            logger.info("Received Home Assistant birth message")
+            self.refresh_discovery = True
+            self.clear_cached_state()
 
     def set_air_vent(self, message):
         "Attempt to move the air vent to the requested position"

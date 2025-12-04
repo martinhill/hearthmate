@@ -416,6 +416,18 @@ if __name__ == "__main__":
         # Priority 3: Run state machine
         try:
             machine.update()
+
+            if ha.refresh_discovery:
+                logger.info("Re-publishing HA discovery payload and state topics")
+                discovery = ha.mqtt_discovery()
+                mqtt_client.publish(discovery["topic"], discovery["message"])
+                # Give HA time to subscribe to availability topic
+                time.sleep(0.25)
+                encoder_status = check_encoder(hardware)
+                mqtt_client.publish(ha.topic_prefix + "/status", "online")
+                ha.send_encoder_status(*encoder_status)
+                ha.update_camera_ok(not camera_exception_raised)
+                ha.refresh_discovery = False
             ha.update()
 
             # Priority 4: Update thermal camera at configured interval
@@ -456,6 +468,7 @@ if __name__ == "__main__":
                 oserror_exception_raised.add(str(e))
         except Exception as e:
             mqtt_logger.error("Unexpected error in main loop: %s", e)
+            hardware.led_on()
             # Log the stack trace exactly once
             if str(e) not in unexpected_exception_raised:
                 import traceback
