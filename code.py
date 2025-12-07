@@ -11,7 +11,7 @@ from state_machine import StateMachine, State
 from hw_test import TestMotion, logger as test_logger
 from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
-from vent_closer import VentCloser, LinearVentFunction, logger as vent_logger
+from vent_closer import VentCloser, LinearVentFunction, VentFunctionABC, logger as vent_logger
 from vent_mover import MoveVentState, logger as vm_logger
 from logging import MQTTHandler, FileHandler
 from connections import (
@@ -21,13 +21,13 @@ from connections import (
     logger as conn_logger,
 )
 from homeassistant import HomeAssistant, logger as ha_logger
-from thermal_camera import get_thermal_camera, logger as cam_logger
+from thermal_camera import ThermalCamera, get_thermal_camera, logger as cam_logger
 from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
-VENT_CLOSE_TIME = os.getenv("VENT_CLOSE_TIME", 60 * 60)
-THERMAL_CAMERA_INTERVAL = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
-THERMAL_MAX_TEMP_CHANGE = float(os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0))  # degrees C
-MEASUREMENT_BUFFER_INTERVAL = int(
+VENT_CLOSE_TIME: int = os.getenv("VENT_CLOSE_TIME", 60 * 60)
+THERMAL_CAMERA_INTERVAL: int = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
+THERMAL_MAX_TEMP_CHANGE: float = float(os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0))  # degrees C
+MEASUREMENT_BUFFER_INTERVAL: int = int(
     os.getenv("MEASUREMENT_BUFFER_INTERVAL", 15)
 )  # seconds
 
@@ -110,8 +110,8 @@ class Calibrate(State):
         hardware = machine.data["hardware"]
 
 
-mqtt_topic = os.getenv("MQTT_TOPIC")
-command_topic = mqtt_topic + "/command"
+mqtt_topic: str = os.getenv("MQTT_TOPIC")
+command_topic: str = mqtt_topic + "/command"
 
 
 def init_mqtt_client(
@@ -264,8 +264,9 @@ def do_thermal_camera_stuff(camera_exception_raised):
             stovelink_start = time.monotonic()
             vent_position = vent.get_position()
             combustion_time = get_combustion_time(closer_function)
+            tmp36_temp = hardware.tmp36_temperature_C()
             stovelink_packet = stovelink_encoder.encode_packet(
-                np_frame, vent_position, combustion_time
+                np_frame, vent_position, combustion_time, tmp36_temp
             )
             try:
                 mqtt_client.publish(
@@ -342,13 +343,12 @@ if __name__ == "__main__":
     machine = init_state_machine(mqtt_client, hardware, vent, closer_function)
 
     # Initialize thermal camera and StoveLink encoder
-    thermal_camera = get_thermal_camera(hardware.i2c, allow_mock=True)
+    thermal_camera: ThermalCamera = get_thermal_camera(hardware.i2c)
     stovelink_encoder = StoveLinkEncoder()
     last_camera_update = 0
 
     # Initialize thermal camera recovery manager
     def thermal_camera_factory():
-        # return get_thermal_camera(hardware.i2c, allow_mock=False)
         thermal_camera.reinitialize()
         return thermal_camera
 
@@ -370,6 +370,7 @@ if __name__ == "__main__":
         logger.error("Failed to connect to MQTT: %s", e)
 
     # Integrate with Home Assistant
+    logger.info("Setting up Home Assistant...")
     ha = HomeAssistant(
         machine,
         mqtt_topic,
@@ -384,8 +385,9 @@ if __name__ == "__main__":
             logger.debug("subscribing to %s", topic)
             mqtt_client.subscribe(topic)
         mqtt_message_handlers.update(ha_handlers)
+        time.sleep(0.2)
         mqtt_client.publish(mqtt_topic + "/status", "online")
-    
+
     setup_ha_handlers(mqtt_client, ha)
     encoder_status = check_encoder(hardware)
     ha.send_encoder_status(*encoder_status)

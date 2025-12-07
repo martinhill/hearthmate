@@ -47,8 +47,8 @@ class StoveLinkDecoder:
     Decodes thermal camera frames with metadata from the custom binary format.
     """
 
-    PACKET_SIZE = 1552  # 16 byte header + 1536 byte body
-    HEADER_SIZE = 16
+    PACKET_SIZE = 1556  # 16 byte header + 1536 byte body
+    HEADER_SIZE = 20
     THERMAL_PIXELS = 768  # 32x24
 
     def decode_packet(self, packet: bytes) -> dict:
@@ -76,7 +76,7 @@ class StoveLinkDecoder:
 
         # Decode header (16 bytes, little-endian)
         header = packet[: self.HEADER_SIZE]
-        seq_id, timestamp, vent_pct, comb_time, reserved = struct.unpack("<IIfHH", header)
+        seq_id, timestamp, vent_pct, comb_time, tmp36_temp, reserved = struct.unpack("<IIfHfH", header)
 
         # Decode thermal frame (1536 bytes = 768 x uint16)
         body = packet[self.HEADER_SIZE :]
@@ -91,6 +91,7 @@ class StoveLinkDecoder:
             "timestamp_ms": timestamp,
             "vent_position": round(vent_pct, 1),
             "combustion_time": comb_time,
+            "tmp36_temperature": tmp36_temp,
             "thermal_frame": thermal_frame,
         }
 
@@ -301,6 +302,10 @@ class HDF5Storage:
                 "combustion_times", shape=(0,), maxshape=(None,), dtype=np.uint16, chunks=True
             )
 
+            self.file.create_dataset(
+                "tmp36_temps", shape=(0,), maxshape=(None,), dtype=np.float32, chunks=True
+            )
+
     def store_packet(self, decoded_packet: dict):
         """Store a decoded packet in HDF5."""
         if self.file is None:
@@ -315,6 +320,7 @@ class HDF5Storage:
             "sequence_ids",
             "timestamps_ms",
             "vent_positions",
+            "tmp36_temps",
             "combustion_times",
         ]:
             self.file[dataset_name].resize(new_size, axis=0)
@@ -324,6 +330,7 @@ class HDF5Storage:
         self.file["sequence_ids"][current_size] = decoded_packet["sequence_id"]
         self.file["timestamps_ms"][current_size] = decoded_packet["timestamp_ms"]
         self.file["vent_positions"][current_size] = decoded_packet["vent_position"]
+        self.file["tmp36_temps"][current_size] = decoded_packet["tmp36_temperature"]
         self.file["combustion_times"][current_size] = decoded_packet["combustion_time"]
 
         # Flush to disk

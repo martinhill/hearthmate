@@ -17,7 +17,7 @@ logger.setLevel(logging.INFO)
 class Hardware:
 
     is_mock = False
-    
+
     def __init__(self, i2c):
         self.i2c = i2c
         self.kit = MotorKit(i2c=self.i2c)
@@ -48,7 +48,7 @@ class Hardware:
 
         return raw_angle_high[0] << 8 | raw_angle_low[0]
 
-    def tmp36_temperature_C(self):
+    def tmp36_temperature_C(self) -> float:
         millivolts = self.tmp36.value * (self.tmp36.reference_voltage * 1000 / 65535)
         return (millivolts - 500) / 10
 
@@ -155,7 +155,7 @@ class MockHardware(Hardware):
         raw_value = int((self.current_angle % 360) * 4096 / 360) + self.open_position
         return raw_value
 
-    def tmp36_temperature_C(self):
+    def tmp36_temperature_C(self) -> float:
         return 30.0
 
     def mock_move_to_angle(self, angle):

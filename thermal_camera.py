@@ -1,7 +1,5 @@
 import time
-import os
 import board
-import busio
 import binascii
 from ulab import numpy as np
 import adafruit_logging as logging
@@ -433,7 +431,7 @@ class MockThermalCamera(ThermalCamera):
         return binascii.b2a_base64(image_data).decode("ascii").strip()
 
 
-def get_thermal_camera(i2c=None, allow_mock=True):
+def get_thermal_camera(i2c=None) -> ThermalCamera:
     """
     Get a thermal camera instance based on hardware availability.
 
@@ -459,13 +457,10 @@ def get_thermal_camera(i2c=None, allow_mock=True):
             return ThermalCamera(i2c)
         except Exception as e:
             logger.error("Failed to initialize MLX90640: %s", e)
-            raise
             logger.info("Falling back to MockThermalCamera")
             return MockThermalCamera(i2c)
-    elif allow_mock:
-        if mlx90640_addr not in scan:
-            logger.info("MLX90640 not detected on I2C bus - using mock camera")
-        else:
-            logger.info("MLX90640 library not available - using mock camera")
-        raise RuntimeError("MLX90640 missing")
-        return MockThermalCamera(i2c)
+    if mlx90640_addr not in scan:
+        logger.info("MLX90640 not detected on I2C bus - using mock camera")
+    else:
+        logger.info("MLX90640 library not available - using mock camera")
+    return MockThermalCamera(i2c)
