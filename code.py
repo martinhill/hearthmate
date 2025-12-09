@@ -369,6 +369,8 @@ if __name__ == "__main__":
     except MMQTTException as e:
         logger.error("Failed to connect to MQTT: %s", e)
 
+    logger.info("Step parameters: %s", hardware.step_params)
+
     # Integrate with Home Assistant
     logger.info("Setting up Home Assistant...")
     ha = HomeAssistant(

@@ -19,7 +19,6 @@ discovery_prefix_default = os.getenv("HA_DISCOVERY_PREFIX", "homeassistant")
 
 
 class HomeAssistant:
-
     def __init__(
         self,
         machine: StateMachine,
@@ -268,6 +267,86 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "step_initial_delay": {
+                    "name": "Step Initial Delay",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_step_initial_delay",
+                    "command_topic": f"{self.topic_prefix}/step_params/initial_delay/set",
+                    "state_topic": f"{self.topic_prefix}/step_params/initial_delay/state",
+                    "unit_of_meas": "s",
+                    "min": 0.01,
+                    "max": 0.25,
+                    "step": 0.001,
+                    "mode": "box",
+                    "ent_cat": "config",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "step_min_delay": {
+                    "name": "Step Min Delay",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_step_min_delay",
+                    "command_topic": f"{self.topic_prefix}/step_params/min_delay/set",
+                    "state_topic": f"{self.topic_prefix}/step_params/min_delay/state",
+                    "unit_of_meas": "s",
+                    "min": 0.01,
+                    "max": 0.25,
+                    "step": 0.001,
+                    "mode": "box",
+                    "ent_cat": "config",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "step_final_delay": {
+                    "name": "Step Final Delay",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_step_final_delay",
+                    "command_topic": f"{self.topic_prefix}/step_params/final_delay/set",
+                    "state_topic": f"{self.topic_prefix}/step_params/final_delay/state",
+                    "unit_of_meas": "s",
+                    "min": 0.01,
+                    "max": 0.25,
+                    "step": 0.001,
+                    "mode": "box",
+                    "ent_cat": "config",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "step_acceleration": {
+                    "name": "Step Acceleration",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_step_acceleration",
+                    "command_topic": f"{self.topic_prefix}/step_params/acceleration/set",
+                    "state_topic": f"{self.topic_prefix}/step_params/acceleration/state",
+                    "unit_of_meas": "s",
+                    "min": 0.001,
+                    "max": 0.1,
+                    "step": 0.001,
+                    "mode": "box",
+                    "ent_cat": "config",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "step_deceleration": {
+                    "name": "Step Deceleration",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_step_deceleration",
+                    "command_topic": f"{self.topic_prefix}/step_params/deceleration/set",
+                    "state_topic": f"{self.topic_prefix}/step_params/deceleration/state",
+                    "unit_of_meas": "s",
+                    "min": 0.001,
+                    "max": 0.1,
+                    "step": 0.001,
+                    "mode": "box",
+                    "ent_cat": "config",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
             },
             "qos": 0,
         }
@@ -317,26 +396,57 @@ class HomeAssistant:
         except Exception as e:
             logger.error("set_duration: %s", e)
 
+    def set_step_param(
+        self, param_name: str, min_value: float, max_value: float, message: str
+    ):
+        """
+        Update a step_params parameter with validation.
+
+        Args:
+            param_name: Name of parameter in step_params dict
+            min_value: Minimum allowed value
+            max_value: Maximum allowed value
+            message: MQTT message containing the new value
+        """
+        try:
+            value = float(message)
+            # Validate and clamp to range
+            value = max(min_value, min(value, max_value))
+            hardware = self.machine.data["hardware"]
+            hardware.step_params[param_name] = value
+            logger.info("Set step_params %s to %.4f s", param_name, value)
+        except ValueError as e:
+            logger.error("set_step_param %s: %s", param_name, e)
+
     def get_command_handlers(self) -> dict[str, Callable[[str], None]]:
         "Provide the callbacks for MQTT command_topics"
         return {
             f"{self.topic_prefix}/air_vent/set": self.set_air_vent,
             f"{self.topic_prefix}/duration/set": self.set_duration,
+            f"{self.topic_prefix}/step_params/initial_delay/set": (
+                lambda msg: self.set_step_param("initial_delay", 0.01, 0.25, msg)
+            ),
+            f"{self.topic_prefix}/step_params/min_delay/set": (
+                lambda msg: self.set_step_param("min_delay", 0.01, 0.25, msg)
+            ),
+            f"{self.topic_prefix}/step_params/final_delay/set": (
+                lambda msg: self.set_step_param("final_delay", 0.01, 0.25, msg)
+            ),
+            f"{self.topic_prefix}/step_params/acceleration/set": (
+                lambda msg: self.set_step_param("acceleration", 0.001, 0.1, msg)
+            ),
+            f"{self.topic_prefix}/step_params/deceleration/set": (
+                lambda msg: self.set_step_param("deceleration", 0.001, 0.1, msg)
+            ),
             f"{self.discovery_prefix}/status": self.ha_status,
         }
 
     def send_encoder_status(self, status_md, status_ml, status_mh):
         """Update encoder_magnet_detected, encoder_magnet_weak, and encoder_magnet_strong components"""
         state_string = lambda value: "ON" if value else "OFF"
-        self.publish(
-            f"{self.topic_prefix}/encoder_md/state", state_string(status_md)
-        )
-        self.publish(
-            f"{self.topic_prefix}/encoder_ml/state", state_string(status_ml)
-        )
-        self.publish(
-            f"{self.topic_prefix}/encoder_mh/state", state_string(status_mh)
-        )
+        self.publish(f"{self.topic_prefix}/encoder_md/state", state_string(status_md))
+        self.publish(f"{self.topic_prefix}/encoder_ml/state", state_string(status_ml))
+        self.publish(f"{self.topic_prefix}/encoder_mh/state", state_string(status_mh))
 
     def clear_cached_state(self):
         self.saved_values.clear()
@@ -355,9 +465,7 @@ class HomeAssistant:
             base64_image: Base64-encoded image data
         """
         try:
-            self.publish(
-                f"{self.topic_prefix}/thermal_camera", base64_image
-            )
+            self.publish(f"{self.topic_prefix}/thermal_camera", base64_image)
         except Exception as e:
             logger.error("Failed to publish thermal camera image: %s", e)
 
@@ -455,6 +563,19 @@ class HomeAssistant:
             if function:
                 duration = int(function.time_range / 60)
                 self.update_mqtt_state("duration/state", duration)
+
+        # Publish step_params state to Home Assistant
+        for param_name in [
+            "initial_delay",
+            "min_delay",
+            "final_delay",
+            "acceleration",
+            "deceleration",
+        ]:
+            param_value = hardware.step_params[param_name]
+            self.update_mqtt_state(
+                f"step_params/{param_name}/state", f"{param_value:.4f}"
+            )
 
     def update_camera_ok(self, ok):
         self.update_mqtt_state("camera_ok/state", "ON" if ok else "OFF")
