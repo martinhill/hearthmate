@@ -11,7 +11,12 @@ from state_machine import StateMachine, State
 from hw_test import TestMotion, logger as test_logger
 from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
-from vent_closer import VentCloser, LinearVentFunction, VentFunctionABC, logger as vent_logger
+from vent_closer import (
+    VentCloser,
+    LinearVentFunction,
+    VentFunctionABC,
+    logger as vent_logger,
+)
 from vent_mover import MoveVentState, logger as vm_logger
 from logging import MQTTHandler, FileHandler
 from connections import (
@@ -26,7 +31,9 @@ from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
 VENT_CLOSE_TIME: int = os.getenv("VENT_CLOSE_TIME", 60 * 60)
 THERMAL_CAMERA_INTERVAL: int = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
-THERMAL_MAX_TEMP_CHANGE: float = float(os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0))  # degrees C
+THERMAL_MAX_TEMP_CHANGE: float = float(
+    os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0)
+)  # degrees C
 MEASUREMENT_BUFFER_INTERVAL: int = int(
     os.getenv("MEASUREMENT_BUFFER_INTERVAL", 15)
 )  # seconds
@@ -229,6 +236,7 @@ def get_combustion_time(closer_function: VentFunctionABC) -> int:
     return int(max(0, elapsed))
     return 0
 
+
 def do_thermal_camera_stuff(camera_exception_raised):
     """
     Do all the thermal camera stuff here to keep the main loop clean.
@@ -269,9 +277,7 @@ def do_thermal_camera_stuff(camera_exception_raised):
                 np_frame, vent_position, combustion_time, tmp36_temp
             )
             try:
-                mqtt_client.publish(
-                    mqtt_topic + "/stovelink", stovelink_packet
-                )
+                mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
 
                 camera_end_time = time.monotonic()
                 stovelink_time = camera_end_time - stovelink_start
@@ -291,11 +297,15 @@ def do_thermal_camera_stuff(camera_exception_raised):
                 )
                 ha.update_thermal_statistics(stats)
             except MMQTTStateError as e:
-                logger.warning("MMQTTStateError during StoveLink MQTT packet publication: %s", e)
+                logger.warning(
+                    "MMQTTStateError during StoveLink MQTT packet publication: %s", e
+                )
             except OSError as e:
                 # Wrap OSError in MMQTTException to be handled by the main loop
                 # Otherwise it would trigger camera recovery manager
-                raise MMQTTException(f"OSError during StoveLink MQTT packet publication: {e}")
+                raise MMQTTException(
+                    f"OSError during StoveLink MQTT packet publication: {e}"
+                )
     return True
 
 
@@ -381,6 +391,7 @@ if __name__ == "__main__":
     )
     discovery = ha.mqtt_discovery()
     mqtt_client.publish(discovery["topic"], discovery["message"])
+
     def setup_ha_handlers(mqtt_client: MQTT, ha: HomeAssistant):
         ha_handlers = ha.get_command_handlers()
         for topic in ha_handlers:
@@ -436,7 +447,6 @@ if __name__ == "__main__":
 
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
-
                 try:
                     if do_thermal_camera_stuff(camera_exception_raised):
                         camera_exception_raised = False
@@ -446,7 +456,9 @@ if __name__ == "__main__":
                     # I2C communication error with thermal camera (e.g., errno 32: broken pipe)
                     thermal_recovery.report_error(e)
                     last_camera_update = (
-                        current_time - THERMAL_CAMERA_INTERVAL + 1 # Update time to prevent rapid retries
+                        current_time
+                        - THERMAL_CAMERA_INTERVAL
+                        + 1  # Update time to prevent rapid retries
                     )
                     camera_exception_raised = True
                     ha.update_camera_ok(False)
@@ -467,8 +479,11 @@ if __name__ == "__main__":
             # Log the stack trace exactly once
             if str(e) not in oserror_exception_raised:
                 import traceback
+
                 stack_trace = traceback.format_exception(e, chain=True)
-                logger.error("OSError stack trace: %s\n%s", str(e), '\n'.join(stack_trace))
+                logger.error(
+                    "OSError stack trace: %s\n%s", str(e), "\n".join(stack_trace)
+                )
                 oserror_exception_raised.add(str(e))
         except Exception as e:
             mqtt_logger.error("Unexpected error in main loop: %s", e)
@@ -476,8 +491,13 @@ if __name__ == "__main__":
             # Log the stack trace exactly once
             if str(e) not in unexpected_exception_raised:
                 import traceback
+
                 stack_trace = traceback.format_exception(e, chain=True)
-                mqtt_logger.error("Unexpected error stack trace: %s\n%s", str(e), '\n'.join(stack_trace))
+                mqtt_logger.error(
+                    "Unexpected error stack trace: %s\n%s",
+                    str(e),
+                    "\n".join(stack_trace),
+                )
                 unexpected_exception_raised.add(str(e))
 
         # Small sleep to prevent busy-waiting

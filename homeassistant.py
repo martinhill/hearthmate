@@ -347,6 +347,18 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "position_error": {
+                    "name": "Position Error",
+                    "p": "sensor",
+                    "unit_of_meas": "°",
+                    "unique_id": f"{self.device_name}_position_error",
+                    "state_topic": f"{self.topic_prefix}/position_error/state",
+                    "ent_cat": "diagnostic",
+                    "icon": "mdi:delta",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
             },
             "qos": 0,
         }
@@ -575,6 +587,14 @@ class HomeAssistant:
             param_value = hardware.step_params[param_name]
             self.update_mqtt_state(
                 f"step_params/{param_name}/state", f"{param_value:.4f}"
+            )
+
+        # Update position_error state to Home Assistant, ignoring values near
+        # the vent position extremes
+        if vent_position > 0.1 and vent_position < 99.9:
+            self.update_mqtt_state(
+                "position_error/state",
+                hardware.position_error and f"{hardware.position_error:.2f}" or "None"
             )
 
     def update_camera_ok(self, ok):

@@ -13,18 +13,48 @@ from adafruit_itertools import count, takewhile
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Constants for encoder calculations
+ENCODER_MAX_VALUE = 4096
+DEGREES_PER_ENCODER_UNIT = 360.0 / ENCODER_MAX_VALUE
+
+
+def calculate_encoder_delta(start_raw, end_raw):
+    """
+    Calculate the shortest angular distance between two encoder positions,
+    handling wraparound at 0/4095.
+
+    Args:
+        start_raw: Starting encoder raw angle (0-4095)
+        end_raw: Ending encoder raw angle (0-4095)
+
+    Returns:
+        Signed delta in encoder units. Positive means counterclockwise motion.
+    """
+    # Calculate direct difference
+    delta = end_raw - start_raw
+
+    # Handle wraparound by choosing the shortest path
+    if delta > ENCODER_MAX_VALUE / 2:
+        delta -= ENCODER_MAX_VALUE
+    elif delta < -ENCODER_MAX_VALUE / 2:
+        delta += ENCODER_MAX_VALUE
+
+    return delta
+
+
 step_params = {
     # initial delay at acceleration start
-    'initial_delay': float(os.getenv('STEP_INITIAL_DELAY', "0.05")),
+    "initial_delay": float(os.getenv("STEP_INITIAL_DELAY", "0.05")),
     # minimum delay between steps at peak speed
-    'min_delay': float(os.getenv('STEP_MIN_DELAY', "0.05")),
+    "min_delay": float(os.getenv("STEP_MIN_DELAY", "0.05")),
     # final delay at deceleration end
-    'final_delay': float(os.getenv('STEP_FINAL_DELAY', "0.05")),
+    "final_delay": float(os.getenv("STEP_FINAL_DELAY", "0.05")),
     # delay change per step during acceleration phase
-    'acceleration': float(os.getenv('STEP_ACCELERATION', "0.05")),
+    "acceleration": float(os.getenv("STEP_ACCELERATION", "0.05")),
     # delay change per step during deceleration phase
-    'deceleration': float(os.getenv('STEP_DECELERATION', "0.05")),
+    "deceleration": float(os.getenv("STEP_DECELERATION", "0.05")),
 }
+
 
 def calc_step_delays(steps, step_params):
     """Approximate a trapezoidal speed profile, suitable for movements of small step count.
@@ -39,19 +69,19 @@ def calc_step_delays(steps, step_params):
     """
 
     # constrain parameters
-    min_delay = max(step_params['min_delay'], 0.01)
-    acceleration = max(step_params['acceleration'], 0.005)
-    deceleration = max(step_params['deceleration'], 0.005)
-    initial_delay = max(step_params['initial_delay'], min_delay)
-    final_delay = max(step_params['final_delay'], min_delay)
+    min_delay = max(step_params["min_delay"], 0.01)
+    acceleration = max(step_params["acceleration"], 0.005)
+    deceleration = max(step_params["deceleration"], 0.005)
+    initial_delay = max(step_params["initial_delay"], min_delay)
+    final_delay = max(step_params["final_delay"], min_delay)
 
-    max_accel_delays = int(steps/2)
-    ramp_up = list(takewhile(
-        lambda x: x > min_delay,
-        count(initial_delay, -acceleration)))[:max_accel_delays]
-    ramp_down = list(takewhile(
-        lambda x: x > min_delay,
-        count(final_delay, -deceleration)))[:max_accel_delays]
+    max_accel_delays = int(steps / 2)
+    ramp_up = list(
+        takewhile(lambda x: x > min_delay, count(initial_delay, -acceleration))
+    )[:max_accel_delays]
+    ramp_down = list(
+        takewhile(lambda x: x > min_delay, count(final_delay, -deceleration))
+    )[:max_accel_delays]
     ramp_down.reverse()
 
     # Take from ramp down if one too many delays
@@ -64,7 +94,6 @@ def calc_step_delays(steps, step_params):
 
 
 class Hardware:
-
     is_mock = False
 
     def __init__(self, i2c, step_params: dict[str, float]):
@@ -79,6 +108,7 @@ class Hardware:
         self.tmp36 = analogio.AnalogIn(board.A2)
 
         self.step_params = step_params
+        self.position_error = None  # type: ignore # Set later by code.py or state machine
 
     def read_encoder_status(self):
         status_buf = bytearray(1)
@@ -104,6 +134,19 @@ class Hardware:
         return (millivolts - 500) / 10
 
     def _move(self, direction, steps, settle_delay=0.05):
+        # Capture starting encoder position
+        start_encoder = self.read_raw_angle()
+
+        # Calculate expected encoder change
+        # Each motor step is 1.8 degrees (200 steps per revolution)
+        # Encoder has 4096 values per 360 degrees
+        # BACKWARD direction increases encoder value (counterclockwise)
+        encoder_units_per_step = ENCODER_MAX_VALUE / 200.0
+        expected_encoder_delta = steps * encoder_units_per_step
+        if direction == stepper.FORWARD:
+            expected_encoder_delta = -expected_encoder_delta
+
+        # Execute the motion
         delays = calc_step_delays(steps, self.step_params)
         for delay in delays:
             self.motor.onestep(direction=direction, style=stepper.DOUBLE)
@@ -111,6 +154,29 @@ class Hardware:
         # final step
         self.motor.onestep(direction=direction, style=stepper.DOUBLE)
         time.sleep(settle_delay)
+
+        # Measure actual encoder position after motion
+        end_encoder = self.read_raw_angle()
+
+        # Calculate actual encoder delta (handling wraparound)
+        actual_encoder_delta = calculate_encoder_delta(start_encoder, end_encoder)
+
+        # Calculate position error in degrees
+        error_encoder_units = actual_encoder_delta - expected_encoder_delta
+        error_degrees = error_encoder_units * DEGREES_PER_ENCODER_UNIT
+
+        # Log the position error
+        logger.debug(
+            "Position error: %.2f° (steps=%d, start=%d, end=%d, expected_delta=%.1f, actual_delta=%.1f)",
+            error_degrees,
+            steps,
+            start_encoder,
+            end_encoder,
+            expected_encoder_delta,
+            actual_encoder_delta,
+        )
+
+        self.position_error = error_degrees
 
     def close_vent(self, amount=10, delay=0.05):
         self._move(stepper.BACKWARD, amount, delay)
@@ -144,10 +210,12 @@ class Hardware:
     def led_off(self):
         self.led.value = False
 
+
 class MockStepper:
     """
     Mock implementation of a stepper motor that updates simulated angle when stepped.
     """
+
     def __init__(self, parent_hardware):
         self.parent = parent_hardware
         self.real_motor = parent_hardware.kit.stepper1
@@ -202,6 +270,7 @@ class MockHardware(Hardware):
         self.led.direction = digitalio.Direction.OUTPUT
 
         self.step_params = step_params
+        self.position_error = None  # type: ignore # Set later by code.py or state machine
 
     def read_encoder_status(self):
         # Return a simulated "good" status
@@ -219,8 +288,9 @@ class MockHardware(Hardware):
         self.current_angle = angle
 
     def mock_move_to_raw_angle(self, raw_angle):
-        self.current_angle = ((raw_angle - self.open_position + 4096) * 360 / 4096) % 360
-
+        self.current_angle = (
+            (raw_angle - self.open_position + 4096) * 360 / 4096
+        ) % 360
 
 
 def get_hardware() -> Hardware:
