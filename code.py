@@ -147,6 +147,7 @@ def init_mqtt_client(
         )
         # Subscribe to all changes on the onoff_feed.
         client.subscribe(command_topic)
+        client.publish(mqtt_topic + "/status", "online")
 
     def disconnected(client, userdata, rc):
         # This method is called when the client is disconnected
@@ -264,48 +265,46 @@ def do_thermal_camera_stuff(camera_exception_raised):
         np_frame = thermal_camera.get_np_frame()
         stats = thermal_camera.get_temperature_statistics(np_frame)
 
-        # Validate stats to filter out erroneous readings
-        if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
-            # Stats are valid - publish image and statistics
+        # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
+        stovelink_start = time.monotonic()
+        vent_position = vent.get_position()
+        combustion_time = get_combustion_time(closer_function)
+        tmp36_temp = hardware.tmp36_temperature_C()
+        stovelink_packet = stovelink_encoder.encode_packet(
+            np_frame, vent_position, combustion_time, tmp36_temp
+        )
+        try:
+            mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
 
-            # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
-            stovelink_start = time.monotonic()
-            vent_position = vent.get_position()
-            combustion_time = get_combustion_time(closer_function)
-            tmp36_temp = hardware.tmp36_temperature_C()
-            stovelink_packet = stovelink_encoder.encode_packet(
-                np_frame, vent_position, combustion_time, tmp36_temp
+            camera_end_time = time.monotonic()
+            stovelink_time = camera_end_time - stovelink_start
+            camera_process_time = camera_end_time - camera_start_time
+            capture_time = stats_start_time - camera_start_time
+            stats_calc_time = stovelink_start - stats_start_time
+            logger.debug(
+                "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
+                stats["min"],
+                stats["max"],
+                stats["mean"],
+                stats["median"],
+                camera_process_time,
+                capture_time,
+                stats_calc_time,
+                stovelink_time,
             )
-            try:
-                mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
-
-                camera_end_time = time.monotonic()
-                stovelink_time = camera_end_time - stovelink_start
-                camera_process_time = camera_end_time - camera_start_time
-                capture_time = stats_start_time - camera_start_time
-                stats_calc_time = stovelink_start - stats_start_time
-                logger.debug(
-                    "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
-                    stats["min"],
-                    stats["max"],
-                    stats["mean"],
-                    stats["median"],
-                    camera_process_time,
-                    capture_time,
-                    stats_calc_time,
-                    stovelink_time,
-                )
+            # Validate stats to warn of erroneous readings
+            if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
                 ha.update_thermal_statistics(stats)
-            except MMQTTStateError as e:
-                logger.warning(
-                    "MMQTTStateError during StoveLink MQTT packet publication: %s", e
-                )
-            except OSError as e:
-                # Wrap OSError in MMQTTException to be handled by the main loop
-                # Otherwise it would trigger camera recovery manager
-                raise MMQTTException(
-                    f"OSError during StoveLink MQTT packet publication: {e}"
-                )
+        except MMQTTStateError as e:
+            logger.warning(
+                "MMQTTStateError during StoveLink MQTT packet publication: %s", e
+            )
+        except OSError as e:
+            # Wrap OSError in MMQTTException to be handled by the main loop
+            # Otherwise it would trigger camera recovery manager
+            raise MMQTTException(
+                f"OSError during StoveLink MQTT packet publication: {e}"
+            )
     return True
 
 

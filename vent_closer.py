@@ -174,7 +174,7 @@ class Closing(State):
     """Close the air vent by the amount needed.
     """
 
-    def __init__(self, min_steps = 5, overshoot = 2, closed_threshold = 0.999):
+    def __init__(self, min_steps = 5, overshoot = 0, closed_threshold = 0.999):
         super().__init__("closing")
         self.min_steps = min_steps
         self.overshoot = overshoot # extra steps to counter mechanical friction and compliance
@@ -206,7 +206,7 @@ class Closing(State):
 
 
 class Closed(State):
-    """Final state reached after air vent is fully closed. On entry slams vent closed, 
+    """Final state reached after air vent is fully closed. On entry slams vent closed,
     then waits until the air vent is moved to full open and resets function.
     """
 
@@ -219,7 +219,7 @@ class Closed(State):
     def enter(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
-        hardware.set_pixel_white()
+        hardware.set_pixel_white(64)
         machine.mqtt_loop()
         vent.update_from_hardware(hardware.read_raw_angle())
         steps, direction, encoder, revs = vent.move_to_position(1.0)
@@ -288,7 +288,7 @@ class VentCloser(State):
         vent = machine.data['vent']
         vent.update_from_hardware(hardware.read_raw_angle())
         function = self.machine.data["function"]
-        
+
         # Normal start
         function.start(vent.get_position())
 
@@ -301,7 +301,7 @@ class VentCloser(State):
         vent = machine.data['vent']
         vent.update_from_hardware(hardware.read_raw_angle())
         function = self.machine.data["function"]
-        
+
         # Resuming logic: Adjust function to current position
         function.adjust(vent.get_position())
         self.machine.states[self.machine.current_state].resume(self.machine)

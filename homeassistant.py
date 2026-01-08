@@ -502,7 +502,7 @@ class HomeAssistant:
             change = abs(stats[key] - self.last_thermal_stats[key])
             if change > max_change:
                 logger.warning(
-                    "Thermal stats discarded: %s changed by %.1fC (threshold: %.1fC) - "
+                    "Thermal stats anomaly: %s changed by %.1fC (threshold: %.1fC) - "
                     "min=%.1fC max=%.1fC mean=%.1fC median=%.1fC",
                     key,
                     change,
@@ -512,6 +512,8 @@ class HomeAssistant:
                     stats["mean"],
                     stats["median"],
                 )
+                # Prevent recurring warnings, thus only one anomaly will be filtered
+                self.last_thermal_stats = None
                 return False
 
         # All stats within threshold - accept and update last reading

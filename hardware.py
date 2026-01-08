@@ -198,8 +198,8 @@ class Hardware:
     def set_pixel_blue(self):
         self.pixels[0] = (0, 0, 255)
 
-    def set_pixel_white(self):
-        self.pixels[0] = (255, 255, 255)
+    def set_pixel_white(self, level=255):
+        self.pixels[0] = (level, level, level)
 
     def set_pixel_off(self):
         self.pixels[0] = (0, 0, 0)
