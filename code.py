@@ -38,6 +38,8 @@ MEASUREMENT_BUFFER_INTERVAL: int = int(
     os.getenv("MEASUREMENT_BUFFER_INTERVAL", 15)
 )  # seconds
 
+MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
+
 logger = logging.getLogger(__name__)
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
 file_log_level = getattr(logging, os.getenv("FILE_LOG_LEVEL", "INFO"), logging.INFO)
@@ -137,6 +139,7 @@ def init_mqtt_client(
         password=mqtt_password,
         socket_pool=pool,
         ssl_context=ssl_context,
+        socket_timeout=MQTT_TIMEOUT,
     )
 
     def connected(client, userdata, flags, rc):
@@ -164,7 +167,7 @@ def init_mqtt_client(
 
 def init_state_machine(mqtt_client, hardware, vent, closer_function):
     # Create the state machine
-    machine = StateMachine()
+    machine = StateMachine(mqtt_timeout=MQTT_TIMEOUT)
     machine.data["hardware"] = hardware
     machine.data["mqtt_client"] = mqtt_client
     machine.data["vent"] = vent

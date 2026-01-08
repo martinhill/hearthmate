@@ -1,8 +1,12 @@
+import os
+
+MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
+
 class State:
     """Base class for states in the state machine"""
     def __init__(self, name):
         self.name = name
-        
+
     def enter(self, machine):
         """Called when entering the state"""
         pass
@@ -10,11 +14,11 @@ class State:
     def resume(self, machine):
         """Called when resuming the state from the stack"""
         self.enter(machine)
-        
+
     def exit(self, machine):
         """Called when exiting the state"""
         pass
-        
+
     def update(self, machine):
         """Called periodically to update the state"""
         pass
@@ -29,21 +33,22 @@ class State:
 
 class StateMachine:
      """Simple state machine implementation"""
-     def __init__(self, initial_state=None):
+     def __init__(self, initial_state=None, mqtt_timeout=MQTT_TIMEOUT):
          self.states = {}
          self.current_state = None
          self.previous_state = None
          self.state_stack = []
          self.data = {}  # Shared data between states
-         
+         self.mqtt_timeout = mqtt_timeout
+
          if initial_state:
              self.add_state(initial_state)
              self.set_state(initial_state.name)
-     
+
      def add_state(self, state):
          """Add a state to the state machine"""
          self.states[state.name] = state
-         
+
      def set_state(self, state_name):
          """Change to a new state"""
          self._transition(state_name)
@@ -53,21 +58,21 @@ class StateMachine:
          """Perform state transition steps (exit current, update tracking)"""
          if state_name not in self.states:
              raise ValueError(f"State {state_name} does not exist")
-             
+
          # Exit current state
          if self.current_state:
              self.states[self.current_state].exit(self)
-             
+
          # Update state tracking
          self.previous_state = self.current_state
          self.current_state = state_name
-         
+
      def push_state(self, state_name):
          """Push the current state to the stack and switch to a new state"""
          if self.current_state:
              self.state_stack.append(self.current_state)
          self.set_state(state_name)
-         
+
      def pop_state(self):
          """Pop the last state from the stack and switch to it"""
          if self.state_stack:
@@ -83,7 +88,7 @@ class StateMachine:
          """Update the current state"""
          if self.current_state:
              self.states[self.current_state].update(self)
-     
+
      def mqtt_loop(self):
          """
          Safely call mqtt_client.loop() with error handling.
@@ -94,9 +99,9 @@ class StateMachine:
          mqtt_client = self.data.get("mqtt_client")
          if not mqtt_client:
              return
-         
+
          try:
-             mqtt_client.loop()
+             mqtt_client.loop(timeout=self.mqtt_timeout)
          except Exception as e:
              # Catch MMQTTStateError and other exceptions from disconnected MQTT client
              # The string representation will contain the exception type name
@@ -107,7 +112,7 @@ class StateMachine:
              else:
                  # Other exceptions should be raised to be handled by the state machine
                  raise
-             
+
      def get_state(self):
          """Get the current state name"""
          return self.current_state
