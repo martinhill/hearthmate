@@ -7,7 +7,7 @@ import ssl
 from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException, MMQTTStateError
 import adafruit_logging as logging
 
-from state_machine import StateMachine, State
+from state_machine import StateMachine, State, logger as sm_logger
 from hw_test import TestMotion, logger as test_logger
 from hardware import get_hardware, logger as hw_logger
 from airvent import create_vent_from_env
@@ -26,7 +26,7 @@ from connections import (
     logger as conn_logger,
 )
 from homeassistant import HomeAssistant, logger as ha_logger
-from thermal_camera import ThermalCamera, get_thermal_camera, logger as cam_logger
+from thermal_camera import ThermalCamera, get_thermal_camera, logger as cam_logger, adafruit_mlx90640
 from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
 VENT_CLOSE_TIME: int = os.getenv("VENT_CLOSE_TIME", 60 * 60)
@@ -39,6 +39,7 @@ MEASUREMENT_BUFFER_INTERVAL: int = int(
 )  # seconds
 
 MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
+MQTT_KEEP_ALIVE: int = int(os.getenv("MQTT_KEEP_ALIVE", 300))
 
 logger = logging.getLogger(__name__)
 log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO"), logging.INFO)
@@ -47,6 +48,20 @@ logger.setLevel(log_level)
 stream_handler = logging.StreamHandler()
 logger.addHandler(stream_handler)
 mqtt_logger = logging.getLogger("mqtt")
+
+# Timing threshold for warning about slow operations (seconds)
+SLOW_OPERATION_THRESHOLD = 10.0
+
+
+def log_slow_operation(operation_name, duration, threshold=SLOW_OPERATION_THRESHOLD):
+    """Log a warning if an operation exceeds the threshold duration."""
+    if duration > threshold:
+        logger.warning(
+            "Slow operation: %s took %.1fs (threshold: %.1fs)",
+            operation_name,
+            duration,
+            threshold,
+        )
 
 
 class IdleState(State):
@@ -84,11 +99,12 @@ class IdleState(State):
     def update(self, machine):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
+        # Always check MQTT --when vent position is stable--
+        # if abs(vent_position - self.last_position) < self.sensitivity:
+        machine.mqtt_loop()
+
         vent.update_from_hardware(hardware.read_raw_angle())
         vent_position = vent.get_position()
-        # Check MQTT when vent position is stable
-        if abs(vent_position - self.last_position) < self.sensitivity:
-            machine.mqtt_loop()
         self.last_position = vent_position
         if vent_position > 0.99 and not self.detected_fully_closed:
             # first detection of vent closed
@@ -140,6 +156,7 @@ def init_mqtt_client(
         socket_pool=pool,
         ssl_context=ssl_context,
         socket_timeout=MQTT_TIMEOUT,
+        keep_alive=MQTT_KEEP_ALIVE,
     )
 
     def connected(client, userdata, flags, rc):
@@ -215,7 +232,9 @@ def setup_loggers(mqtt_client: MQTT, mqtt_handler: MQTTHandler):
         ha_logger: [mqtt_handler, stream_handler],
         vm_logger: [mqtt_handler, file_handler],
         cam_logger: [mqtt_handler, file_handler],
+        adafruit_mlx90640.logger: [mqtt_handler, file_handler],
         stovelink_logger: [mqtt_handler, file_handler],
+        sm_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
         for handler in handlers:
@@ -249,7 +268,13 @@ def do_thermal_camera_stuff(camera_exception_raised):
     global thermal_camera, ha, mqtt_client, vent, stovelink_encoder, machine, mqtt_topic
 
     if camera_exception_raised:
+        recovery_start = time.monotonic()
         recovered_camera = thermal_recovery.attempt_recovery(current_time)
+        recovery_duration = time.monotonic() - recovery_start
+        if recovery_duration > 1.0:
+            logger.warning(
+                "Thermal camera recovery attempt took %.1fs", recovery_duration
+            )
         if recovered_camera:
             thermal_camera = recovered_camera
             logger.info("Thermal camera recovered and operational")
@@ -262,6 +287,13 @@ def do_thermal_camera_stuff(camera_exception_raised):
 
     camera_start_time = time.monotonic()
     frame = thermal_camera.capture_frame()
+    capture_duration = time.monotonic() - camera_start_time
+    if capture_duration > 5.0:
+        logger.warning(
+            "Thermal camera frame capture took %.1fs (retries: %d)",
+            capture_duration,
+            thermal_camera.retry_count,
+        )
     if frame:
         # Calculate temperature statistics
         stats_start_time = time.monotonic()
@@ -269,23 +301,29 @@ def do_thermal_camera_stuff(camera_exception_raised):
         stats = thermal_camera.get_temperature_statistics(np_frame)
 
         # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
+        tmp36_start = time.monotonic()
+        tmp36_temp = hardware.tmp36_temperature_C()
         stovelink_start = time.monotonic()
         vent_position = vent.get_position()
         combustion_time = get_combustion_time(closer_function)
-        tmp36_temp = hardware.tmp36_temperature_C()
         stovelink_packet = stovelink_encoder.encode_packet(
             np_frame, vent_position, combustion_time, tmp36_temp
         )
         try:
             mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
 
+            # Validate stats to warn of erroneous readings
+            if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
+                ha.update_thermal_statistics(stats)
             camera_end_time = time.monotonic()
             stovelink_time = camera_end_time - stovelink_start
             camera_process_time = camera_end_time - camera_start_time
             capture_time = stats_start_time - camera_start_time
             stats_calc_time = stovelink_start - stats_start_time
-            logger.debug(
-                "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, sl=%.4fs)",
+            tmp36_time = stovelink_start - tmp36_start
+            logger_method = logger.debug if camera_process_time < SLOW_OPERATION_THRESHOLD else logger.warning
+            logger_method(
+                "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, tmp36=%.2fs, sl=%.2fs)",
                 stats["min"],
                 stats["max"],
                 stats["mean"],
@@ -293,11 +331,9 @@ def do_thermal_camera_stuff(camera_exception_raised):
                 camera_process_time,
                 capture_time,
                 stats_calc_time,
+                tmp36_time,
                 stovelink_time,
             )
-            # Validate stats to warn of erroneous readings
-            if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
-                ha.update_thermal_statistics(stats)
         except MMQTTStateError as e:
             logger.warning(
                 "MMQTTStateError during StoveLink MQTT packet publication: %s", e
@@ -416,12 +452,16 @@ if __name__ == "__main__":
     oserror_exception_raised: set[str] = set()
     unexpected_exception_raised: set[str] = set()
     while True:
+        loop_start_time = time.monotonic()
         current_time = time.monotonic()
 
         # Priority 1: Ensure WiFi is connected
+        wifi_start = time.monotonic()
         wifi_manager.check_and_recover(current_time)
+        log_slow_operation("WiFi check/recovery", time.monotonic() - wifi_start)
 
         # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
+        mqtt_reconnect_start = time.monotonic()
         if mqtt_conn_manager.attempt_reconnect(current_time, mqtt_exception_raised):
             hardware.led_off()
             if mqtt_exception_raised:
@@ -429,12 +469,16 @@ if __name__ == "__main__":
                 ha.clear_cached_state()
                 setup_ha_handlers(mqtt_client, ha)
             mqtt_exception_raised = False
+        log_slow_operation(
+            "MQTT reconnect attempt", time.monotonic() - mqtt_reconnect_start
+        )
 
         # Priority 3: Run state machine
         try:
             machine.update()
 
             if ha.refresh_discovery:
+                discovery_start = time.monotonic()
                 logger.info("Re-publishing HA discovery payload and state topics")
                 discovery = ha.mqtt_discovery()
                 mqtt_client.publish(discovery["topic"], discovery["message"])
@@ -445,13 +489,23 @@ if __name__ == "__main__":
                 ha.send_encoder_status(*encoder_status)
                 ha.update_camera_ok(not camera_exception_raised)
                 ha.refresh_discovery = False
+                log_slow_operation(
+                    "HA discovery refresh", time.monotonic() - discovery_start
+                )
+
+            ha_update_start = time.monotonic()
             ha.update()
+            log_slow_operation("HA update", time.monotonic() - ha_update_start)
 
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
                 try:
+                    thermal_start = time.monotonic()
                     if do_thermal_camera_stuff(camera_exception_raised):
                         camera_exception_raised = False
+                    log_slow_operation(
+                        "Thermal camera capture", time.monotonic() - thermal_start
+                    )
                     last_camera_update = current_time
 
                 except OSError as e:
@@ -501,6 +555,10 @@ if __name__ == "__main__":
                     "\n".join(stack_trace),
                 )
                 unexpected_exception_raised.add(str(e))
+
+        # Log slow main loop iterations
+        loop_duration = time.monotonic() - loop_start_time
+        log_slow_operation("Main loop iteration", loop_duration)
 
         # Small sleep to prevent busy-waiting
         time.sleep(0.1)

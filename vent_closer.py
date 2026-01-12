@@ -112,8 +112,8 @@ class Monitoring(State):
             # Should initiate motion?
             ideal_position = func.get_position()
             steps = vent.move_to_position(ideal_position)[0]
-            logger.debug("ideal_position=%.4f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
             if steps >= self.min_steps or ideal_position > 0.999:
+                logger.debug("ideal_position=%.4f, steps=%d, displacement=%.3f", ideal_position, steps, displacement)
                 # Initiate motion
                 machine.set_state("closing")
 
@@ -235,11 +235,12 @@ class Closed(State):
         hardware = machine.data["hardware"]
         vent = machine.data["vent"]
 
+        # Always check MQTT --when vent position is stable--
+        # if abs(vent_position - self.last_position) < self.sensitivity:
+        machine.mqtt_loop()
+
         vent.update_from_hardware(hardware.read_raw_angle())
         vent_position = vent.get_position()
-        # Check MQTT when vent position is stable
-        if abs(vent_position - self.last_position) < self.sensitivity:
-            machine.mqtt_loop()
         if vent_position < self.last_position - 0.01:
             # Vent is moving open
             machine.set_state("override")

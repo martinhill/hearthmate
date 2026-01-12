@@ -121,11 +121,16 @@ class Hardware:
         raw_angle_low = bytearray(1)
         raw_angle_high = bytearray(1)
 
+        start = time.monotonic()
         with self.as5600:
             self.as5600.write(bytes([0xD]))
             self.as5600.readinto(raw_angle_low)
             self.as5600.write(bytes([0xC]))
             self.as5600.readinto(raw_angle_high)
+
+        duration = time.monotonic() - start
+        if duration > 1.0:
+            logger.warning("AS5600 encoder read took %.2fs", duration)
 
         return raw_angle_high[0] << 8 | raw_angle_low[0]
 
@@ -216,9 +221,20 @@ class MockStepper:
     Mock implementation of a stepper motor that updates simulated angle when stepped.
     """
 
+    class FakeMotor:
+
+        def onestep(self, direction=stepper.FORWARD, style=stepper.SINGLE):
+            pass
+
+        def release(self):
+            pass
+
     def __init__(self, parent_hardware):
         self.parent = parent_hardware
-        self.real_motor = parent_hardware.kit.stepper1
+        if parent_hardware.kit is None:
+            self.real_motor = self.FakeMotor()
+        else:
+            self.real_motor = parent_hardware.kit.stepper1
         self.style = stepper.SINGLE
 
     def onestep(self, direction=stepper.FORWARD, style=stepper.SINGLE):
@@ -254,7 +270,10 @@ class MockHardware(Hardware):
 
     def __init__(self, i2c, step_params: dict[str, float]):
         self.i2c = i2c
-        self.kit = MotorKit(i2c=self.i2c)
+        try:
+            self.kit = MotorKit(i2c=self.i2c)
+        except Exception as e:
+            self.kit = None
 
         # Simulated encoder state
         self.current_angle: float = 0.0  # Current angle in degrees
@@ -303,7 +322,7 @@ def get_hardware() -> Hardware:
     i2c.unlock()
     logger.info("I2C scan: %s", [hex(addr) for addr in scan])
 
-    if 0x36 in scan:
+    if 0x36 in scan and 0x60 in scan:
         hardware = Hardware(i2c, step_params)
     else:
         logger.info("AS5600 not found - using mock hardware")

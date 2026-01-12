@@ -27,6 +27,7 @@ import struct
 import time
 
 from adafruit_bus_device.i2c_device import I2CDevice
+import adafruit_logging as logging
 
 try:
     from typing import List, Optional, Tuple, Union
@@ -37,6 +38,9 @@ except ImportError:
 
 __version__ = "0.0.0+auto.0"
 __repo__ = "https://github.com/adafruit/Adafruit_CircuitPython_MLX90640.git"
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # We match the melexis library naming, and don't want to change
 
@@ -144,13 +148,17 @@ class MLX90640:
             tr = self._GetTa(mlx90640Frame) - OPENAIR_TA_SHIFT
             self._CalculateTo(mlx90640Frame, emissivity, tr, framebuf)
             tend = time.monotonic()
-            # print("_GetFrameData duration =", t1-t0, "_CalculateTo duration =", tend-t2)
+            if tend - t0 > 2.0:
+                logger.warning("_GetFrameData status, duration = %d %f _CalculateTo duration = %f", status, t1-t0, tend-t2)
+            else:
+                logger.debug("_GetFrameData status, duration = %d %f _CalculateTo duration = %f", status, t1-t0, tend-t2)
             subpage = 0 if status else 1
 
-    def _GetFrameData(self, frameData: List[int], subpage: int = None) -> int:
+    def _GetFrameData(self, frameData: List[int], subpage: int = None, timeout: float = 5.0) -> int:
         dataReady = 0
         statusRegister = [0]
         controlRegister = [0]
+        start_time = time.monotonic()
 
         while dataReady == 0:
             self._I2CReadWords(0x8000, statusRegister)
@@ -161,6 +169,8 @@ class MLX90640:
                 # print("wrong page:", page_measured)
                 time.sleep(0.05)
                 dataReady = 0
+                if time.monotonic() - start_time >= timeout:
+                    raise TimeoutError("Timeout waiting for frame data")
             # print("ready status: 0x%x" % dataReady)
 
         self._I2CReadWords(0x0400, frameData, end=832)

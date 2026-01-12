@@ -166,42 +166,55 @@ class ThermalCamera:
             OSError: If I2C communication fails persistently (for recovery manager to handle)
         """
         for attempt in range(self.max_retries):
+            attempt_start = time.monotonic()
             try:
                 self.mlx.getFrame(self.frame)
+                attempt_duration = time.monotonic() - attempt_start
+                if attempt_duration > 2.0:
+                    logger.warning(
+                        "mlx.getFrame() took %.1fs on attempt %d/%d",
+                        attempt_duration,
+                        attempt + 1,
+                        self.max_retries,
+                    )
                 self.last_frame_time = time.monotonic()
                 self.retry_count = 0
                 return self.frame
-            except ValueError as e:
+            except (TimeoutError, ValueError) as e:
                 # Transient frame capture error - retry with short delay
+                attempt_duration = time.monotonic() - attempt_start
                 self.retry_count += 1
                 if attempt < self.max_retries - 1:
                     logger.debug(
-                        "Frame capture retry %d/%d (ValueError)",
+                        "Frame capture retry %d/%d (ValueError after %.1fs)",
                         attempt + 1,
                         self.max_retries,
+                        attempt_duration,
                     )
                     time.sleep(0.01)
                 else:
                     logger.warning(
-                        "Failed to capture frame after %d retries: %s",
+                        "Failed to capture frame after %d retries (%.1fs per attempt): %s",
                         self.max_retries,
+                        attempt_duration,
                         e,
                     )
                     return None
             except OSError as e:
                 # I2C communication error (e.g., errno 32: broken pipe)
                 # Log the error and raise it for the recovery manager to handle
+                attempt_duration = time.monotonic() - attempt_start
                 self.retry_count += 1
                 logger.error(
-                    "I2C communication error during frame capture (attempt %d/%d): %s (errno=%s)",
+                    "I2C communication error during frame capture (attempt %d/%d, %.1fs): %s (errno=%s)",
                     attempt + 1,
                     self.max_retries,
+                    attempt_duration,
                     e,
                     getattr(e, "errno", "unknown"),
                 )
                 # Don't retry OSError - raise immediately for recovery
                 raise
-        return None
         return None
 
     def get_temperature_range(self, frame=None):
@@ -227,9 +240,9 @@ class ThermalCamera:
         The current frame will be automatically used if provided frame is None.
         """
         if frame is None:
-            npframe = frame
-        else:
             npframe = np.array(self.frame, dtype=np.float)
+        else:
+            npframe = frame
 
         return {
             "min": np.min(npframe),
