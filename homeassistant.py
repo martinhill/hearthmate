@@ -104,6 +104,19 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "mem_free": {
+                    "name": "Memory free",
+                    "p": "sensor",
+                    "device_class": "data_size",
+                    "unit_of_measurement": "B",
+                    "ent_cat": "diagnostic",
+                    "unique_id": f"{self.device_name}_mem_free",
+                    "state_topic": f"{self.topic_prefix}/mem_free/state",
+                    "icon": "mdi:memory",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "camera_ok": {
                     "name": "Camera OK",
                     "p": "binary_sensor",
@@ -601,3 +614,6 @@ class HomeAssistant:
 
     def update_camera_ok(self, ok):
         self.update_mqtt_state("camera_ok/state", "ON" if ok else "OFF")
+
+    def update_mem_free(self, mem_free):
+        self.update_mqtt_state("mem_free/state", mem_free)

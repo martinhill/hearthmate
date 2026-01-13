@@ -125,7 +125,7 @@ class StateMachine:
             mqtt_client.loop(timeout=self.mqtt_timeout)
             loop_end = time.monotonic()
 
-            if loop_end - loop_start > self.mqtt_timeout + 0.1:
+            if loop_end - loop_start > self.mqtt_timeout + 1.0:
                 logger.warning("MQTT loop took %.4fs", loop_end - loop_start)
 
             # Track gaps between mqtt_loop calls

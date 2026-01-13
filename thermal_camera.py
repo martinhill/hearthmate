@@ -14,12 +14,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Constants for histogram-based median calculation
-HIST_MIN_TEMP = -10  # Minimum expected temperature in Celsius
-HIST_MAX_TEMP = 300  # Maximum expected temperature in Celsius
-HIST_BIN_SIZE = 10  # 0.1°C precision (multiply temp by 10)
-HIST_SIZE = (HIST_MAX_TEMP - HIST_MIN_TEMP) * HIST_BIN_SIZE + 1
-
 
 def encode_bmp(rgb_data, width, height):
     """
@@ -105,9 +99,9 @@ class ThermalCamera:
         self.retry_count = 0
         self.max_retries = 5
 
-        # Reusable data structures for statistics calculation
-        self._temp_histogram = np.zeros(HIST_SIZE, dtype=np.uint16)
-        self._freq_map = {}
+        # Reusable numpy array for statistics calculation
+        # Avoids creating new array every 10 seconds, reduces heap fragmentation
+        self._np_frame = np.zeros(768, dtype=np.float)
 
         logger.info(
             "MLX90640 initialized (serial: %s)",
@@ -232,15 +226,19 @@ class ThermalCamera:
         return (min(frame), max(frame))
 
     def get_np_frame(self):
-        "Get a numpy array version of the current frame"
-        return np.array(self.frame, dtype=np.float)
+        """Get a numpy array version of the current frame.
+        Updates and returns the reusable internal numpy array to avoid allocations."""
+        # Update the reusable array with current frame data using slice assignment
+        # This is more efficient than element-by-element copying
+        self._np_frame[:] = self.frame
+        return self._np_frame
 
     def get_temperature_statistics(self, frame: np.ndarray[float] = None):
         """Calculate basic statistics on the given frame. The argument is assumed to be a numpy array.
         The current frame will be automatically used if provided frame is None.
         """
         if frame is None:
-            npframe = np.array(self.frame, dtype=np.float)
+            npframe = self.get_np_frame()
         else:
             npframe = frame
 
@@ -387,6 +385,7 @@ class MockThermalCamera(ThermalCamera):
         self.base_temp = 20.0  # Base ambient temperature
         self.hotspot_temp = 35.0  # Hot spot temperature
         self.time_offset = 0
+        self._np_frame = np.zeros(768, dtype=np.float)
 
         logger.info("MockThermalCamera initialized (simulated)")
 

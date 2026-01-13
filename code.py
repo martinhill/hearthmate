@@ -3,6 +3,7 @@ import os
 import wifi
 import socketpool
 import ssl
+import gc
 
 from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException, MMQTTStateError
 import adafruit_logging as logging
@@ -26,7 +27,12 @@ from connections import (
     logger as conn_logger,
 )
 from homeassistant import HomeAssistant, logger as ha_logger
-from thermal_camera import ThermalCamera, get_thermal_camera, logger as cam_logger, adafruit_mlx90640
+from thermal_camera import (
+    ThermalCamera,
+    get_thermal_camera,
+    logger as cam_logger,
+    adafruit_mlx90640,
+)
 from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
 VENT_CLOSE_TIME: int = os.getenv("VENT_CLOSE_TIME", 60 * 60)
@@ -296,6 +302,8 @@ def do_thermal_camera_stuff(camera_exception_raised):
         )
     if frame:
         # Calculate temperature statistics
+        # Note: get_np_frame() reuses internal numpy array to avoid allocations
+        # This eliminates 3KB allocation every 10s, reducing heap fragmentation
         stats_start_time = time.monotonic()
         np_frame = thermal_camera.get_np_frame()
         stats = thermal_camera.get_temperature_statistics(np_frame)
@@ -321,7 +329,11 @@ def do_thermal_camera_stuff(camera_exception_raised):
             capture_time = stats_start_time - camera_start_time
             stats_calc_time = stovelink_start - stats_start_time
             tmp36_time = stovelink_start - tmp36_start
-            logger_method = logger.debug if camera_process_time < SLOW_OPERATION_THRESHOLD else logger.warning
+            logger_method = (
+                logger.debug
+                if camera_process_time < SLOW_OPERATION_THRESHOLD
+                else logger.warning
+            )
             logger_method(
                 "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, tmp36=%.2fs, sl=%.2fs)",
                 stats["min"],
@@ -346,6 +358,13 @@ def do_thermal_camera_stuff(camera_exception_raised):
             )
     return True
 
+def check_mem_free(threshold : int = os.getenv("LOW_MEMORY_THRESHOLD", 50000)):
+    # Memory diagnostics: Check free memory
+
+    mem_free = gc.mem_free()
+    if mem_free < threshold:  # Low memory threshold
+        logger.warning("Low memory: %d bytes", mem_free)
+    return mem_free
 
 if __name__ == "__main__":
 
@@ -357,6 +376,10 @@ if __name__ == "__main__":
             machine.set_state("vent_closer")
         elif message == "stop" or message == "idle":
             machine.set_state("idle")
+        elif message == "collect":
+            logger.info("Free memory before GC: %d bytes", gc.mem_free())
+            gc.collect()
+            logger.info("Free memory after GC: %d bytes", gc.mem_free())
         else:
             logger.warning("Unknown command: %s", message)
 
@@ -452,7 +475,6 @@ if __name__ == "__main__":
     oserror_exception_raised: set[str] = set()
     unexpected_exception_raised: set[str] = set()
     while True:
-        loop_start_time = time.monotonic()
         current_time = time.monotonic()
 
         # Priority 1: Ensure WiFi is connected
@@ -500,6 +522,9 @@ if __name__ == "__main__":
             # Priority 4: Update thermal camera at configured interval
             if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
                 try:
+                    # First, check and monitor free memory. Done here to minimize overhead.
+                    ha.update_mem_free(check_mem_free())
+                    # The actual thermal camera update
                     thermal_start = time.monotonic()
                     if do_thermal_camera_stuff(camera_exception_raised):
                         camera_exception_raised = False
@@ -557,7 +582,7 @@ if __name__ == "__main__":
                 unexpected_exception_raised.add(str(e))
 
         # Log slow main loop iterations
-        loop_duration = time.monotonic() - loop_start_time
+        loop_duration = time.monotonic() - current_time
         log_slow_operation("Main loop iteration", loop_duration)
 
         # Small sleep to prevent busy-waiting
