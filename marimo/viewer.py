@@ -18,7 +18,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(Path, mo):
+def file_selection(Path, mo):
     file_browser = mo.ui.file_browser(
         initial_path=Path("/Volumes/burnie/"), multiple=False, filetypes=[".h5"]
     )
@@ -27,7 +27,7 @@ def _(Path, mo):
 
 
 @app.cell(hide_code=True)
-def _(file_browser, h5py, mo, np):
+def h5_data_extraction(file_browser, h5py, mo):
     burn_file = file_browser.path()
     h5_file = h5py.File(burn_file, "r")
     _keys = list(h5_file.keys())
@@ -37,8 +37,8 @@ def _(file_browser, h5py, mo, np):
     vent_positions = h5_file["vent_positions"][:]
     image_frames = h5_file["mlx90640_frames"]
 
-    max_temps = np.max(image_frames, axis=(1, 2))
-    mean_temps = np.mean(image_frames, axis=(1, 2))
+    #max_temps = np.max(image_frames, axis=(1, 2))
+    #mean_temps = np.mean(image_frames, axis=(1, 2))
 
     zoom_slider = mo.ui.slider(
         start=0,
@@ -50,8 +50,6 @@ def _(file_browser, h5py, mo, np):
     return (
         combustion_times,
         image_frames,
-        max_temps,
-        mean_temps,
         tmp36_temps,
         vent_positions,
         zoom_slider,
@@ -59,15 +57,55 @@ def _(file_browser, h5py, mo, np):
 
 
 @app.cell(hide_code=True)
+def frame_filter(
+    combustion_times,
+    image_frames,
+    np,
+    tmp36_temps,
+    vent_positions,
+):
+    even_checkerboard = np.zeros(image_frames[0].shape, dtype=bool)
+    even_checkerboard[1::2, ::2] = True
+    even_checkerboard[::2, 1::2] = True
+    even_checkerboard
+    odd_checkerboard = ~even_checkerboard
+
+    means_even = np.array([np.mean(frame[even_checkerboard]) for frame in image_frames])
+    means_odd = np.array([np.mean(frame[odd_checkerboard]) for frame in image_frames])
+
+    bad_frame_mask = np.abs(means_even - means_odd) > 100
+    good_frames_mask = np.abs(means_even - means_odd) < 100
+    good_frame_indices = np.where(good_frames_mask)[0]
+
+    filtered_frames = image_frames[good_frame_indices]
+
+    fcombustion_times = combustion_times[good_frame_indices]
+    ftmp36_temps = tmp36_temps[good_frame_indices]
+    fvent_positions = vent_positions[good_frame_indices]
+
+    max_temps = np.max(filtered_frames, axis=(1, 2))
+    mean_temps = np.mean(filtered_frames, axis=(1, 2))
+
+    return (
+        fcombustion_times,
+        filtered_frames,
+        ftmp36_temps,
+        fvent_positions,
+        max_temps,
+        mean_temps,
+    )
+
+
+@app.cell(hide_code=True)
 def _(
     alt,
-    combustion_times,
+    fcombustion_times,
+    ftmp36_temps,
+    fvent_positions,
     max_temps,
     mean_temps,
     mo,
     pl,
-    tmp36_temps,
-    vent_positions,
     zoom_slider,
 ):
     frame_slider = mo.ui.slider(
@@ -76,11 +114,11 @@ def _(
 
     _df = pl.DataFrame(
         {
-            "time": combustion_times[: zoom_slider.value],
-            "pipe_temperature": tmp36_temps[: zoom_slider.value],
+            "time": fcombustion_times[: zoom_slider.value],
+            "pipe_temperature": ftmp36_temps[: zoom_slider.value],
             "max_temp": max_temps[: zoom_slider.value],
             "mean_temp": mean_temps[: zoom_slider.value],
-            "vent_position": vent_positions[: zoom_slider.value],
+            "vent_position": fvent_positions[: zoom_slider.value],
         }
     )
 
@@ -127,26 +165,26 @@ def _(
 
 @app.cell(hide_code=True)
 def thermal_image_explorer(
-    combustion_times,
+    fcombustion_times,
+    filtered_frames,
     frame_slider,
-    image_frames,
+    fvent_positions,
     max_temps,
     mo,
     np,
     plt,
-    vent_positions,
     zoom_slider,
 ):
-    min_temp = np.min(image_frames[: zoom_slider.value])
+    min_temp = np.min(filtered_frames[: zoom_slider.value])
     max_temp = np.max(max_temps[: zoom_slider.value])
 
     plt.close("all")
-    frame = np.fliplr(image_frames[frame_slider.value])
+    frame = np.fliplr(filtered_frames[frame_slider.value])
     fig, ax = plt.subplots()
     im = ax.imshow(frame, cmap="hot", aspect="auto", vmin=min_temp, vmax=max_temp)
-    fig.colorbar(im, ax=ax, label="Temperature (°C)", location='bottom')
+    fig.colorbar(im, ax=ax, label="Temperature (°C)", location="bottom")
     ax.set_title(
-        f"Thermal Image at {combustion_times[frame_slider.value]}s, vent {vent_positions[frame_slider.value]:.1f}% open"
+        f"Thermal Image at {fcombustion_times[frame_slider.value]}s, vent {fvent_positions[frame_slider.value]:.1f}% open"
     )
     plt.tight_layout()
     thermal_plot = mo.ui.matplotlib(plt.gca())
