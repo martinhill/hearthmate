@@ -24,8 +24,10 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 ## TODO
 
 - [Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) - DONE
-- Raise exception in Hardware._move if encoder travel is in wrong direction
-- discard initial mlx90640 frame after reboot
+- toss out extreme max values, use max - mean < threshold to validate
+- Explicit indication in HA and LED when mock hardware selected due to i2c scan result
+- Raise exception in Hardware._move if encoder travel is in wrong direction, or does not change
+- LED indicator during camera activity
 - Back-off logic based on camera data
 - stovelink seq num, burn time, and other state info recovery after reboot: use mqtt retain
 - Add HA diagnostic entity to track motor step slippage % over movement from open->closed: 

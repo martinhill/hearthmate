@@ -287,13 +287,14 @@ class MockHardware(Hardware):
         self.pixels = neopixel.NeoPixel(board.NEOPIXEL, 1)
         self.led = digitalio.DigitalInOut(board.LED)
         self.led.direction = digitalio.Direction.OUTPUT
+        self.tmp36 = analogio.AnalogIn(board.A2)
 
         self.step_params = step_params
         self.position_error = None  # type: ignore # Set later by code.py or state machine
 
     def read_encoder_status(self):
         # Return a simulated "good" status
-        return 0x67  # Arbitrary status value indicating normal operation
+        return 0x47  # Arbitrary status value indicating no magnet detected
 
     def read_raw_angle(self):
         # Convert current angle to raw encoder value (4096 values for 360 degrees)
@@ -301,7 +302,8 @@ class MockHardware(Hardware):
         return raw_value
 
     def tmp36_temperature_C(self) -> float:
-        return 30.0
+        tmp36 = super().tmp36_temperature_C()
+        return max(tmp36, 0)
 
     def mock_move_to_angle(self, angle):
         self.current_angle = angle

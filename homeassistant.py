@@ -573,15 +573,11 @@ class HomeAssistant:
         self.update_mqtt_state("state", self.machine.current_state)
 
         # Buffer TMP36 temperature measurements
-        if hardware.is_mock:
-            # This will set the value to unknown in HA
-            self.update_mqtt_state("tmp36/state", "None")
-        else:
-            tmp36_temp = hardware.tmp36_temperature_C()
-            self.measurement_buffer.add_measurement("tmp36", tmp36_temp)
-            if self.measurement_buffer.should_publish("tmp36"):
-                tmp36_avg = self.measurement_buffer.publish("tmp36")
-                self.update_mqtt_state("tmp36/state", tmp36_avg)
+        tmp36_temp = hardware.tmp36_temperature_C()
+        self.measurement_buffer.add_measurement("tmp36", tmp36_temp)
+        if self.measurement_buffer.should_publish("tmp36"):
+            tmp36_avg = self.measurement_buffer.publish("tmp36")
+            self.update_mqtt_state("tmp36/state", tmp36_avg)
 
         # kludge alert
         vent_closer = self.machine.states.get("vent_closer")

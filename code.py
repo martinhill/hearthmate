@@ -206,17 +206,18 @@ def check_encoder(hardware):
     encoder_md = bool(encoder_status & 0x20)
     encoder_ml = bool(encoder_status & 0x10)
     encoder_mh = bool(encoder_status & 0x8)
-    if encoder_md and not encoder_mh and not encoder_ml:
-        logger.info("Encoder status ok: magnet detected (STATUS=0x%X)", encoder_status)
-    elif encoder_md and (encoder_ml or encoder_mh):
-        magnet_condition = "weak" if encoder_ml else "strong"
-        logger.warning(
-            "Encoder status check: magnet detected but too %s (STATUS=0x%X)",
-            magnet_condition,
-            encoder_status,
-        )
-    else:
-        logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
+    if not hardware.is_mock:
+        if encoder_md and not encoder_mh and not encoder_ml:
+            logger.info("Encoder status ok: magnet detected (STATUS=0x%X)", encoder_status)
+        elif encoder_md and (encoder_ml or encoder_mh):
+            magnet_condition = "weak" if encoder_ml else "strong"
+            logger.warning(
+                "Encoder status check: magnet detected but too %s (STATUS=0x%X)",
+                magnet_condition,
+                encoder_status,
+            )
+        else:
+            logger.error("Encoder status check failed: STATUS=0x%X", encoder_status)
     return (encoder_md, encoder_ml, encoder_mh)
 
 
@@ -246,6 +247,7 @@ def setup_loggers(mqtt_client: MQTT, mqtt_handler: MQTTHandler):
         for handler in handlers:
             lgr.addHandler(handler)
         lgr.setLevel(log_level)
+    adafruit_mlx90640.logger.setLevel(logging.INFO)  ## too noisy
     mqtt_logger.setLevel(
         getattr(logging, os.getenv("MQTT_LOG_LEVEL", "INFO"), logging.INFO)
     )
@@ -312,40 +314,36 @@ def do_thermal_camera_stuff(camera_exception_raised):
         tmp36_start = time.monotonic()
         tmp36_temp = hardware.tmp36_temperature_C()
         stovelink_start = time.monotonic()
+        tmp36_time = stovelink_start - tmp36_start
+        stats_calc_time = stovelink_start - stats_start_time
+        capture_time = stats_start_time - camera_start_time
         vent_position = vent.get_position()
         combustion_time = get_combustion_time(closer_function)
         stovelink_packet = stovelink_encoder.encode_packet(
             np_frame, vent_position, combustion_time, tmp36_temp
         )
         try:
+            stovelink_publish_start = time.monotonic()
             mqtt_client.publish(mqtt_topic + "/stovelink", stovelink_packet)
 
             # Validate stats to warn of erroneous readings
+            ha_stats_start = time.monotonic()
             if ha.validate_thermal_stats(stats, THERMAL_MAX_TEMP_CHANGE):
                 ha.update_thermal_statistics(stats)
             camera_end_time = time.monotonic()
-            stovelink_time = camera_end_time - stovelink_start
             camera_process_time = camera_end_time - camera_start_time
-            capture_time = stats_start_time - camera_start_time
-            stats_calc_time = stovelink_start - stats_start_time
-            tmp36_time = stovelink_start - tmp36_start
-            logger_method = (
-                logger.debug
-                if camera_process_time < SLOW_OPERATION_THRESHOLD
-                else logger.warning
-            )
-            logger_method(
-                "Stats: %.1f %.1f %.1f %.1f, time=%.4fs (cap=%.4fs, stat=%.4fs, tmp36=%.2fs, sl=%.2fs)",
-                stats["min"],
-                stats["max"],
-                stats["mean"],
-                stats["median"],
-                camera_process_time,
-                capture_time,
-                stats_calc_time,
-                tmp36_time,
-                stovelink_time,
-            )
+            stovelink_packet_time = stovelink_publish_start - stovelink_start
+            if camera_process_time > SLOW_OPERATION_THRESHOLD:
+                logger.warning(
+                    "Camera processing took %.1fs (cap=%.2fs, stat=%.2fs, tmp36=%.2fs, sl=%.2fs, mqtt=%.2fs, ha=%.2fs)",
+                    camera_process_time,
+                    capture_time,
+                    stats_calc_time,
+                    tmp36_time,
+                    stovelink_packet_time,
+                    ha_stats_start - stovelink_publish_start,
+                    camera_end_time - ha_stats_start,
+                )
         except MMQTTStateError as e:
             logger.warning(
                 "MMQTTStateError during StoveLink MQTT packet publication: %s", e
