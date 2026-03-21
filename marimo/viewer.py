@@ -73,8 +73,8 @@ def frame_filter(
     means_even = np.array([np.mean(frame[even_checkerboard]) for frame in image_frames])
     means_odd = np.array([np.mean(frame[odd_checkerboard]) for frame in image_frames])
 
-    bad_frame_mask = np.abs(means_even - means_odd) > 100
-    good_frames_mask = np.abs(means_even - means_odd) < 100
+    bad_frame_mask = np.abs(means_even - means_odd) > 10
+    good_frames_mask = np.abs(means_even - means_odd) < 10
     good_frame_indices = np.where(good_frames_mask)[0]
 
     filtered_frames = image_frames[good_frame_indices]
@@ -86,6 +86,7 @@ def frame_filter(
     max_temps = np.max(filtered_frames, axis=(1, 2))
     mean_temps = np.mean(filtered_frames, axis=(1, 2))
 
+    print(f"Bad frames identified and removed: {np.count_nonzero(bad_frame_mask)} {np.where(bad_frame_mask)[0].tolist()}")
     return (
         fcombustion_times,
         filtered_frames,
