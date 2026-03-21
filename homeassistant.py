@@ -104,6 +104,17 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "encoder_raw_angle": {
+                    "name": "AS5600 raw angle",
+                    "p": "sensor",
+                    "ent_cat": "diagnostic",
+                    "unique_id": f"{self.device_name}_encoder_raw_angle",
+                    "state_topic": f"{self.topic_prefix}/encoder_raw_angle/state",
+                    "icon": "mdi:rotate-right",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "mem_free": {
                     "name": "Memory free",
                     "p": "sensor",
@@ -599,6 +610,9 @@ class HomeAssistant:
             self.update_mqtt_state(
                 f"step_params/{param_name}/state", f"{param_value:.4f}"
             )
+
+        # Publish encoder_raw_angle state to Home Assistant
+        self.update_mqtt_state("encoder_raw_angle/state", self.vent.last_angle)
 
         # Update position_error state to Home Assistant, ignoring values near
         # the vent position extremes
