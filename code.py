@@ -35,7 +35,7 @@ from thermal_camera import (
 )
 from stovelink import StoveLinkEncoder, logger as stovelink_logger
 
-VENT_CLOSE_TIME: int = os.getenv("VENT_CLOSE_TIME", 60 * 60)
+VENT_CLOSE_TIME: int = int(os.getenv("VENT_CLOSE_TIME", 60 * 60))
 THERMAL_CAMERA_INTERVAL: int = int(os.getenv("THERMAL_CAMERA_INTERVAL", 30))  # seconds
 THERMAL_MAX_TEMP_CHANGE: float = float(
     os.getenv("THERMAL_MAX_TEMP_CHANGE", 30.0)
@@ -356,7 +356,7 @@ def do_thermal_camera_stuff(camera_exception_raised):
             )
     return True
 
-def check_mem_free(threshold : int = os.getenv("LOW_MEMORY_THRESHOLD", 50000)):
+def check_mem_free(threshold : int = int(os.getenv("LOW_MEMORY_THRESHOLD", 50000))):
     # Memory diagnostics: Check free memory
 
     mem_free = gc.mem_free()

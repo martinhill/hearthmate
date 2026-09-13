@@ -15,7 +15,7 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 
 ## Software stack
 
-- [CircuitPython 10.0.3](https://docs.circuitpython.org/en/stable/docs/index.html)
+- [CircuitPython 10.3.x](https://docs.circuitpython.org/en/stable/docs/index.html)
 - [Adafruit Motorkit library](https://docs.circuitpython.org/projects/motorkit/en/latest/)
 - [Adafruit motor library](https://docs.circuitpython.org/projects/motor/en/latest/)
 - [Adafruit MiniMQTT library](https://docs.circuitpython.org/projects/minimqtt/en/latest/)

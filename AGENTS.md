@@ -1,7 +1,7 @@
 # Agent Guidelines for Hearthmate
 
 ## Project Overview
-CircuitPython project for an automated wood stove air vent controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor. Main files: `code.py`, `state_machine.py`, `testing.py`, `hardware.py`.
+CircuitPython 10.3.x project for an automated wood stove air vent controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor. Main files: `code.py`, `state_machine.py`, `testing.py`, `hardware.py`.
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device
@@ -24,3 +24,7 @@ CircuitPython project for an automated wood stove air vent controller using ESP3
 **Comments:** Document non-obvious logic, especially encoder angle calculations and motion timing. Use TODO markers sparingly.
 
 **Hardware Abstraction:** Always use Hardware interface for motor/sensor access. MockHardware class enables testing without physical hardware.
+
+## CircuitPython Version Notes
+
+**Minimum version: 10.2.0.** As of CircuitPython 10.2.0, `os.getenv()` always returns a `str`, even for unquoted integer values in `settings.toml` (e.g. `VENT_CLOSE_TIME = 2700` comes back as `'2700'`). All numeric env reads must be wrapped in `int()` or `float()`. Use `supervisor.get_setting()` if you need typed values, but prefer the cast-at-read pattern for consistency with the existing codebase.
