@@ -5,7 +5,8 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device
-- Device upload: Copy .py files to device's `/lib` or root via REPL or file transfer
+- Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs `requirements.txt`
+  with circup). It reloads the device, so deploy between burns.
 
 ## Code Style Guidelines
 

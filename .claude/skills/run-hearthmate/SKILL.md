@@ -123,8 +123,10 @@ cd simulation && uv run --project ../marimo python final.py
   Archived files read fine. `current_cycle.h5` can't be opened at all while the service holds it.
 - **The device clock reads 2000-01-01** (no RTC). Match device log lines to HDF5 frames by the `t=`
   / `combustion_time` and `seq` columns, not by time.
-- **Copying firmware files to the board reloads CircuitPython.** The controller drops to `idle`,
-  the burn timer resets and the HDF5 burn file splits. Deploy between burns.
+- **Uploading firmware files to the board reloads CircuitPython.** The controller drops to `idle`,
+  the burn timer resets and the HDF5 burn file splits. `scripts/deploy.sh -n` (read-only) shows
+  what differs from the device; uploading (`scripts/deploy.sh`) is for the person to run between
+  burns. `wwshell` prints the web workflow password in its "Found device" line; the script strips it.
 - **`replay` is slow (~2 min)** because it reads every HDF5 burn file over SMB.
 
 ## Troubleshooting
