@@ -1,5 +1,10 @@
 """Load burn cycles recorded by the StoveLink service (HDF5) for model fitting."""
 import h5py, glob, numpy as np, os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Settings from the repo's .env (template: .env.example); the environment takes precedence
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 ROOT = os.environ.get("BURNIE_DATA", "/Volumes/Burnie").rstrip("/") + "/"
 ev=np.zeros((24,32),bool); ev[1::2,::2]=True; ev[::2,1::2]=True
 

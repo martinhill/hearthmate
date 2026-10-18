@@ -5,7 +5,7 @@
 #   bottom right: shell in the repo
 # In iTerm2 it attaches in control mode (tmux -CC), so the panes are native iTerm2 splits.
 #
-# Configuration, kept out of the repo:
+# Configuration comes from the repo's .env (copy .env.example); the environment takes precedence:
 #   HEARTHMATE_TOPIC      the device's MQTT_TOPIC from settings.toml (required)
 #   HEARTHMATE_MQTT_HOST  broker host (optional if -h is in the mosquitto_sub config file)
 #   HEARTHMATE_SESSION    tmux session name (default: hearthmate)
@@ -14,8 +14,16 @@
 #     -P somepassword
 set -eu
 
-session=${HEARTHMATE_SESSION:-hearthmate}
 repo=${0:A:h:h}
+if [[ -f $repo/.env ]]; then
+    # Load .env without overriding variables already set in the environment
+    while IFS='=' read -r key value; do
+        value=${value%\"}; value=${value#\"}; value=${value%\'}; value=${value#\'}
+        [[ -z ${(P)key:-} ]] && export "$key=$value"
+    done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$repo/.env")
+fi
+
+session=${HEARTHMATE_SESSION:-hearthmate}
 topic=${HEARTHMATE_TOPIC:?Set HEARTHMATE_TOPIC to the device MQTT_TOPIC}
 # Full path, as the tmux server's PATH may lack it (e.g. MacPorts /opt/local/bin)
 mosquitto_sub=${commands[mosquitto_sub]:?mosquitto_sub not found}

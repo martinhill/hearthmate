@@ -16,7 +16,8 @@ uv run --project ../marimo python integration.py 40         # VentCloser state m
 uv run --project ../marimo python replay_stalls.py fair     # stall / coal-stage classifier on recorded burns
 ```
 
-Data comes from `$BURNIE_DATA` (default `/Volumes/Burnie`). Files that can't be opened are skipped,
+Data comes from `BURNIE_DATA` in the repo's `.env` (copy `.env.example`) or the environment
+(default `/Volumes/Burnie`). Files that can't be opened are skipped,
 such as the cycle StoveLink is currently writing.
 
 | File | Purpose |

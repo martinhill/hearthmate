@@ -10,4 +10,5 @@ dependencies = [
     "marimo[recommended]>=0.21.1",
     "matplotlib>=3.10.8",
     "mcp>=1.26.0",
+    "python-dotenv>=1.2.2",
 ]
