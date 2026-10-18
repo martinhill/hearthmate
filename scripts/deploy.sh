@@ -142,7 +142,8 @@ if (( libs )); then
     (cd "$repo" && $uvrun circup --host "$host" install -r requirements.txt 2>&1 | sed -E 's#//[^@/]*@#//#')
 fi
 for file in $changed; do
-    out=$(ww put --overwrite "$repo/$file" "$file")
+    # put's optional LOCATION is a directory prefix joined to the file name: none means the root
+    out=$(ww put --overwrite "$repo/$file")
     # Check the upload by reading it back
     rm -f "$tmp/$file"
     ww get "$file" "$tmp/" >/dev/null
