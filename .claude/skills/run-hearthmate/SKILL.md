@@ -133,6 +133,9 @@ cd simulation && uv run --project ../marimo python final.py
 - **Autoreload is off while the firmware runs** and CircuitPython keeps that across soft
   reloads, so `code.py` turns it back on in every exit path. Keep it that way, or a crashed
   deploy can only be recovered by power-cycling the board.
+- **Don't leave web workflow pages open** (`http://<CP_HOST>/code/`, `/cp/serial/`) in a
+  browser. Background tabs are the suspected cause of the board's ~60 s stalls; `deploy.sh`,
+  `status`, `watch` and `burnlog` cover what those pages were used for.
 - **`replay` is slow (~2 min)** because it reads every HDF5 burn file over SMB.
 
 ## Troubleshooting
