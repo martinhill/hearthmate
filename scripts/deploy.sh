@@ -5,6 +5,8 @@
 #   scripts/deploy.sh -n          only show what differs (no uploads)
 #   scripts/deploy.sh -y          upload without asking
 #   scripts/deploy.sh --libs      also install the libraries in requirements.txt (circup)
+#
+# Needs uv; wwshell and circup come from the repo's pyproject.toml.
 #   scripts/deploy.sh FILE...     limit to these files
 #
 # The firmware files are code.py and the repo modules it imports, directly or indirectly, so a
@@ -46,11 +48,12 @@ done
 
 host=${CP_HOST:?Set CP_HOST in .env to the device hostname}
 : ${CIRCUP_WEBWORKFLOW_PASSWORD:?Set CIRCUP_WEBWORKFLOW_PASSWORD in .env to the web workflow password}
-wwshell=${commands[wwshell]:?wwshell not found (uv tool install circup)}
+# wwshell and circup come from the repo's uv project (pyproject.toml)
+uvrun=(uv run --quiet --project "$repo")
 
 ww() {
     # wwshell prints the password in its "Found device at http://:PASSWORD@host" line
-    "$wwshell" --host "$host" "$@" 2>&1 | sed -E 's#//[^@/]*@#//#'
+    $uvrun wwshell --host "$host" "$@" 2>&1 | sed -E 's#//[^@/]*@#//#'
 }
 
 # code.py plus every repo module reachable from it through imports
@@ -129,7 +132,7 @@ fi
 
 if (( libs )); then
     # circup reads the password from CIRCUP_WEBWORKFLOW_PASSWORD
-    (cd "$repo" && circup --host "$host" install -r requirements.txt 2>&1 | sed -E 's#//[^@/]*@#//#')
+    (cd "$repo" && $uvrun circup --host "$host" install -r requirements.txt 2>&1 | sed -E 's#//[^@/]*@#//#')
 fi
 for file in $changed; do
     out=$(ww put --overwrite "$repo/$file" "$file")
