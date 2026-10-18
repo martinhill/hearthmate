@@ -84,11 +84,13 @@ is the CircuitPython default), `AUTORELOAD` (`off` by default) and `WATCHDOG_TIM
 ## TODO
 
 - Main loop stalls of ~60 s, a few per day, since at least Dec 2025, blocking the whole board
-  (seen inside mqtt_client.loop(), time.sleep() and the camera driver's arithmetic). They end
-  at the same second of the minute, also with `WIFI_POWER_MANAGEMENT = "none"`. Suspected cause:
-  web workflow pages (code editor, serial console) left open in background browser tabs, whose
-  timers browsers throttle to once a minute. Since 18 Oct 2026 all such tabs are closed: check
-  whether "Main loop stalled" / "MQTT loop gap" warnings stop. Don't leave those pages open.
+  (seen inside mqtt_client.loop(), time.sleep() and the camera driver's arithmetic), and twice on
+  18 Oct 2026 a permanent freeze (the board still answered ping). Cause: browsers connected to
+  the web workflow. The stalls ended at the same second of the minute while Safari/Chrome tabs
+  had its pages open; with them closed, the next stall and freeze came when Chrome connected to
+  the board again and kept an idle connection open. Short requests (curl, wwshell, deploy.sh)
+  haven't caused any. Don't open the web workflow in a browser; the watchdog recovers a freeze.
+  Worth reporting to CircuitPython with a minimal reproduction.
 - Corrupted thermal frames and I2C hangs: a race in the forked MLX90640 driver or the wiring.
   Bad frames are kept out of control; the STEMMA QT power-cycle recovery is untested on hardware.
 - TMP36 drifts down and then reads −35.8°C (the ADC floor, ~0 V) for minutes at a time
