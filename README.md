@@ -63,7 +63,9 @@ in idle as before. See `burn_state.py`; `simulation/restart.py` tests it.
 A hardware watchdog resets the board if the main loop stops for `WATCHDOG_TIMEOUT` seconds
 (120 by default): the board has frozen for good inside a network call while still answering
 ping. The burn resumes after a watchdog reset too, if the device clock survived it; otherwise
-it starts in idle. To test it on a cold stove, send the `test_watchdog` command, which stops the
+it starts in idle. Tested on the board on 18 Oct 2026: reset 2 minutes after the main loop
+stopped, a normal boot (not safe mode), the clock survived, and `temp_control` resumed after
+142 s. To test it on a cold stove, send the `test_watchdog` command, which stops the
 main loop:
 
 ```bash
