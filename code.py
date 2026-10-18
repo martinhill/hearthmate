@@ -68,6 +68,8 @@ AUTORELOAD: bool = os.getenv("AUTORELOAD", "off").lower() in ("on", "true", "1")
 WATCHDOG_TIMEOUT: float = float(os.getenv("WATCHDOG_TIMEOUT", 120))
 
 MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
+# Re-announce availability this often (s), so a stale "offline" can't stick
+STATUS_INTERVAL: int = 60
 MQTT_KEEP_ALIVE: int = int(os.getenv("MQTT_KEEP_ALIVE", 300))
 
 logger = logging.getLogger(__name__)
@@ -186,6 +188,10 @@ def init_mqtt_client(
         ssl_context=ssl_context,
         socket_timeout=MQTT_TIMEOUT,
         keep_alive=MQTT_KEEP_ALIVE,
+        # Fixed, not MiniMQTT's random default: after a hard reset the broker then replaces the
+        # dead session at once, instead of publishing its "offline" will minutes after the new
+        # session announced "online" (HA showed the device unavailable until the next restart)
+        client_id="hearthmate-" + mqtt_topic,
     )
 
     def connected(client, userdata, flags, rc):
@@ -582,6 +588,7 @@ if __name__ == "__main__":
     # Main loop
     mqtt_exception_raised = False
     camera_exception_raised = False
+    last_status_time = 0
     oserror_exception_raised: set[str] = set()
     unexpected_exception_raised: set[str] = set()
     try:
@@ -642,6 +649,10 @@ if __name__ == "__main__":
                 save_start = time.monotonic()
                 burn_store.maybe_save(machine, stovelink_encoder.sequence_id)
                 log_slow_operation("Burn state save", time.monotonic() - save_start)
+
+                if current_time - last_status_time >= STATUS_INTERVAL:
+                    mqtt_client.publish(mqtt_topic + "/status", "online")
+                    last_status_time = current_time
 
                 # Priority 4: Update thermal camera at configured interval
                 if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
