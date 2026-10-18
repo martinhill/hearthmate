@@ -96,7 +96,8 @@ HEARTHMATE_SESSION=hm-agent TMUX= scripts/tmux.sh </dev/null >/dev/null 2>&1; sl
 uv run --project marimo python .claude/skills/run-hearthmate/driver.py check
 ```
 
-Expect `firmware syntax: 13/13 files ok` and both service suites passing (8/8, 4/4).
+Expect `firmware syntax: 14/14 files ok`, both service suites passing (8/8, 4/4) and
+`restart: 123/123 restart checks passed` (soft reboots in every controller phase; ~45 s).
 Simulation regression across both stove models, parameter variants and sensor noise (~30 s):
 
 ```bash
@@ -123,10 +124,15 @@ cd simulation && uv run --project ../marimo python final.py
   Archived files read fine. `current_cycle.h5` can't be opened at all while the service holds it.
 - **The device clock reads 2000-01-01** (no RTC). Match device log lines to HDF5 frames by the `t=`
   / `combustion_time` and `seq` columns, not by time.
-- **Uploading firmware files to the board reloads CircuitPython.** The controller drops to `idle`,
-  the burn timer resets and the HDF5 burn file splits. `scripts/deploy.sh -n` (read-only) shows
-  what differs from the device; uploading (`scripts/deploy.sh`) is for the person to run between
-  burns. `wwshell` prints the web workflow password in its "Found device" line; the script strips it.
+- **Deploying reloads the device.** `scripts/deploy.sh -n` (read-only) shows what differs from
+  the device; uploading (`scripts/deploy.sh`) is for the person to run: it ends with the MQTT
+  `reload` command, and the device resumes the burn from the retained
+  `burnie/controller/saved` state (`burn_state.py`). Firmware from before that resume reloads on
+  every upload and starts in `idle`. `wwshell` prints the web workflow password in its
+  "Found device" line; the script strips it.
+- **Autoreload is off while the firmware runs** and CircuitPython keeps that across soft
+  reloads, so `code.py` turns it back on in every exit path. Keep it that way, or a crashed
+  deploy can only be recovered by power-cycling the board.
 - **`replay` is slow (~2 min)** because it reads every HDF5 burn file over SMB.
 
 ## Troubleshooting

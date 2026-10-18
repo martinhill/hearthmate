@@ -57,6 +57,32 @@ class VentFunctionABC():
         self.time_adjustment = self.inverse(new_position) - self.time_func() + self.start_time
         logger.info("Function adjust: time_adjustment=%d", self.time_adjustment)
 
+    def save_state(self):
+        """State needed to resume after a soft reboot, as a JSON-able dict. Times are saved as
+        ages in seconds, as the clock behind time_func may restart with the program."""
+        return {
+            "time_range": self.time_range,
+            "age": self._age(self.start_time),
+            "start_position": getattr(self, "start_position", None),
+            "time_adjustment": self.time_adjustment,
+        }
+
+    def restore_state(self, state, downtime):
+        """Resume from save_state() output. downtime: seconds between the save and now."""
+        self._restore_now = self.time_func() - downtime
+        self.time_range = state["time_range"]
+        self.start_time = self._time(state["age"])
+        self.start_position = state["start_position"]
+        self.time_adjustment = state["time_adjustment"]
+
+    def _age(self, timestamp):
+        "Seconds before now of a time_func() timestamp, for save_state()"
+        return None if timestamp is None else round(self.time_func() - timestamp, 2)
+
+    def _time(self, age):
+        "time_func() timestamp of an age saved by save_state(), during restore_state()"
+        return None if age is None else self._restore_now - age
+
 
 class LinearVentFunction(VentFunctionABC):
     """Just a simple straight line.
@@ -318,6 +344,15 @@ class VentCloser(State):
         function.adjust(vent.get_position())
         self.machine.states[self.machine.current_state].resume(self.machine)
         logger.info("%s resumed", self.name)
+
+    def restore(self, machine, vent_closed):
+        """Re-enter after a soft reboot with the function already restored (no start()).
+        Monitoring takes it from there: closing, or straight to closed if the function says so."""
+        for key in "vent", "hardware", "mqtt_client":
+            self.machine.data[key] = machine.data[key]
+        self.machine.data["vent_closed"] = vent_closed
+        self.machine.set_state("monitoring")
+        logger.info("%s resumed after reload", self.name)
 
     def exit(self, machine):
         logger.info("exit %s", self.name)

@@ -4,6 +4,7 @@ import wifi
 import socketpool
 import ssl
 import gc
+import supervisor
 
 from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException, MMQTTStateError
 import adafruit_logging as logging
@@ -20,6 +21,7 @@ from vent_closer import (
 )
 from vent_mover import MoveVentState, logger as vm_logger
 from temperature_target import TemperatureTargetFunction, logger as tt_logger
+from burn_state import BurnStateStore, run_reason, logger as bs_logger
 from logging import MQTTHandler, FileHandler
 from connections import (
     WiFiConnectionManager,
@@ -53,6 +55,10 @@ MODE_ALIASES = {"vent_closer": "timed_close", "close": "timed_close"}
 # Mode engaged automatically when Idle sees the vent closed then opened: timed_close or temp_control
 AUTO_MODE: str = os.getenv("AUTO_MODE", "timed_close")
 AUTO_MODE = MODE_ALIASES.get(AUTO_MODE, AUTO_MODE)
+
+# Reload when files are written over the web workflow. Off, so a deploy during a burn reloads
+# once, on the reload command, after all files are uploaded (scripts/deploy.sh).
+AUTORELOAD: bool = os.getenv("AUTORELOAD", "off").lower() in ("on", "true", "1")
 
 MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
 MQTT_KEEP_ALIVE: int = int(os.getenv("MQTT_KEEP_ALIVE", 300))
@@ -253,6 +259,7 @@ def setup_loggers(mqtt_client: MQTT, mqtt_handler: MQTTHandler):
         adafruit_mlx90640.logger: [mqtt_handler, file_handler],
         stovelink_logger: [mqtt_handler, file_handler],
         tt_logger: [mqtt_handler, file_handler],
+        bs_logger: [mqtt_handler, file_handler],
         sm_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
@@ -394,6 +401,50 @@ def check_mem_free(threshold : int = int(os.getenv("LOW_MEMORY_THRESHOLD", 50000
         logger.warning("Low memory: %d bytes", mem_free)
     return mem_free
 
+def resume_or_idle():
+    """Resume the burn after a soft reboot from the retained saved state, otherwise start in
+    idle (see burn_state.py)"""
+    reason = run_reason()
+    saved = None
+    if mqtt_client.is_connected():
+        mqtt_message_handlers[burn_store.topic] = burn_store.on_message
+        try:
+            saved = burn_store.fetch()
+        except (MMQTTException, OSError) as e:
+            logger.warning("Could not fetch the saved burn state: %s", e)
+        del mqtt_message_handlers[burn_store.topic]
+    vent.update_from_hardware(hardware.read_raw_angle())
+    resume, why = burn_store.check(saved, reason, vent.get_position())
+    if resume:
+        try:
+            downtime = burn_store.restore(machine, saved)
+            # Count the frames missed while down, so the sequence shows the gap
+            stovelink_encoder.sequence_id = (
+                saved["seq"] + 1 + int(downtime / THERMAL_CAMERA_INTERVAL)
+            )
+            logger.info("Resumed %s", why)
+            return
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            why = "saved state incomplete (%s: %s)" % (type(e).__name__, e)
+    logger.info("Starting in idle: %s", why)
+    machine.set_state("idle")
+    if saved is not None:
+        burn_store.clear()
+
+
+def reload_device():
+    "Save the burn state and reload, to run newly deployed code (the reload command)"
+    logger.info("Reloading on request")
+    try:
+        burn_store.save(machine, stovelink_encoder.sequence_id)
+        mqtt_client.loop(timeout=0.5)
+    except (MMQTTException, OSError) as e:
+        logger.warning("Could not save the burn state before reloading: %s", e)
+    # If the new code fails before its main loop, a fixed upload must still reload it
+    supervisor.runtime.autoreload = True
+    supervisor.reload()
+
+
 if __name__ == "__main__":
 
     def command_handler(message):
@@ -405,6 +456,8 @@ if __name__ == "__main__":
             machine.set_state(message)
         elif message == "stop" or message == "idle":
             machine.set_state("idle")
+        elif message == "reload":
+            reload_device()
         elif message == "collect":
             logger.info("Free memory before GC: %d bytes", gc.mem_free())
             gc.collect()
@@ -502,133 +555,156 @@ if __name__ == "__main__":
     encoder_status = check_encoder(hardware)
     ha.send_encoder_status(*encoder_status)
     ha.update_camera_ok(True)
-    machine.set_state("idle")
-    logger.info("Starting main loop")
+
+    burn_store = BurnStateStore(
+        mqtt_client,
+        mqtt_topic + "/controller/saved",
+        {"timed_close": closer_function, "temp_control": temp_function},
+        hardware,
+    )
+    resume_or_idle()
+    logger.info("Starting main loop (autoreload %s)", "on" if AUTORELOAD else "off")
 
     # Main loop
     mqtt_exception_raised = False
     camera_exception_raised = False
     oserror_exception_raised: set[str] = set()
     unexpected_exception_raised: set[str] = set()
-    while True:
-        current_time = time.monotonic()
+    try:
+        # Off until the finally below. The flag survives soft reloads (CircuitPython only sets it
+        # at a hard start), so every way out of here turns it back on.
+        supervisor.runtime.autoreload = AUTORELOAD
+        while True:
+            current_time = time.monotonic()
 
-        # Priority 1: Ensure WiFi is connected
-        wifi_start = time.monotonic()
-        wifi_manager.check_and_recover(current_time)
-        log_slow_operation("WiFi check/recovery", time.monotonic() - wifi_start)
+            # Priority 1: Ensure WiFi is connected
+            wifi_start = time.monotonic()
+            wifi_manager.check_and_recover(current_time)
+            log_slow_operation("WiFi check/recovery", time.monotonic() - wifi_start)
 
-        # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
-        mqtt_reconnect_start = time.monotonic()
-        if mqtt_conn_manager.attempt_reconnect(current_time, mqtt_exception_raised):
-            hardware.led_off()
-            if mqtt_exception_raised:
-                mqtt_handler.resume()
-                ha.clear_cached_state()
-                setup_ha_handlers(mqtt_client, ha)
-            mqtt_exception_raised = False
-        log_slow_operation(
-            "MQTT reconnect attempt", time.monotonic() - mqtt_reconnect_start
-        )
-
-        # Priority 3: Run state machine
-        try:
-            machine.update()
-
-            if ha.refresh_discovery:
-                discovery_start = time.monotonic()
-                logger.info("Re-publishing HA discovery payload and state topics")
-                discovery = ha.mqtt_discovery()
-                mqtt_client.publish(discovery["topic"], discovery["message"])
-                # Give HA time to subscribe to availability topic
-                time.sleep(0.25)
-                encoder_status = check_encoder(hardware)
-                mqtt_client.publish(ha.topic_prefix + "/status", "online")
-                ha.send_encoder_status(*encoder_status)
-                ha.update_camera_ok(not camera_exception_raised)
-                ha.refresh_discovery = False
-                log_slow_operation(
-                    "HA discovery refresh", time.monotonic() - discovery_start
-                )
-
-            ha_update_start = time.monotonic()
-            ha.update()
-            log_slow_operation("HA update", time.monotonic() - ha_update_start)
-
-            # Priority 4: Update thermal camera at configured interval
-            if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
-                try:
-                    # First, check and monitor free memory. Done here to minimize overhead.
-                    ha.update_mem_free(check_mem_free())
-                    # The actual thermal camera update
-                    thermal_start = time.monotonic()
-                    if do_thermal_camera_stuff(camera_exception_raised):
-                        camera_exception_raised = False
-                    log_slow_operation(
-                        "Thermal camera capture", time.monotonic() - thermal_start
-                    )
-                    last_camera_update = current_time
-
-                except OSError as e:
-                    # I2C communication error with thermal camera (e.g., errno 32: broken pipe)
-                    thermal_recovery.report_error(e)
-                    last_camera_update = (
-                        current_time
-                        - THERMAL_CAMERA_INTERVAL
-                        + 1  # Update time to prevent rapid retries
-                    )
-                    camera_exception_raised = True
-                    ha.update_camera_ok(False)
-
-        except MMQTTException as e:
-            # Log but don't try to reconnect here - let managers handle it
-            # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler
-            mqtt_handler.suspend()
-            logger.error("MQTT error during state update: %s", e)
-            hardware.led_on()
-            mqtt_exception_raised = True
-        except OSError as e:
-            # Network/IO errors not related to thermal camera
-            mqtt_handler.suspend()
-            logger.error("Network/IO error during state update: %s", e)
-            hardware.led_on()
-            mqtt_exception_raised = True
-            # Log the stack trace exactly once
-            if str(e) not in oserror_exception_raised:
-                import traceback
-
-                stack_trace = traceback.format_exception(e, chain=True)
-                logger.error(
-                    "OSError stack trace: %s\n%s", str(e), "\n".join(stack_trace)
-                )
-                oserror_exception_raised.add(str(e))
-        except Exception as e:
-            mqtt_logger.error("Unexpected error in main loop: %s", e)
-            hardware.led_on()
-            # Log the stack trace exactly once
-            if str(e) not in unexpected_exception_raised:
-                import traceback
-
-                stack_trace = traceback.format_exception(e, chain=True)
-                mqtt_logger.error(
-                    "Unexpected error stack trace: %s\n%s",
-                    str(e),
-                    "\n".join(stack_trace),
-                )
-                unexpected_exception_raised.add(str(e))
-
-        # Log slow main loop iterations
-        loop_duration = time.monotonic() - current_time
-        log_slow_operation("Main loop iteration", loop_duration)
-
-        # Small sleep to prevent busy-waiting. CircuitPython runs its background tasks (WiFi, web
-        # workflow, mDNS) during the sleep, so a network stall shows up here, not in a timed step.
-        sleep_start = time.monotonic()
-        time.sleep(0.1)
-        sleep_duration = time.monotonic() - sleep_start
-        if sleep_duration > 5.0:
-            logger.warning(
-                "Main loop stalled %.1fs in background tasks (RSSI %s)",
-                sleep_duration,
-                wifi.radio.ap_info.rssi if wifi.radio.ap_info else "-",
+            # Priority 2: Ensure MQTT is connected (only if WiFi is OK)
+            mqtt_reconnect_start = time.monotonic()
+            if mqtt_conn_manager.attempt_reconnect(current_time, mqtt_exception_raised):
+                hardware.led_off()
+                if mqtt_exception_raised:
+                    mqtt_handler.resume()
+                    ha.clear_cached_state()
+                    setup_ha_handlers(mqtt_client, ha)
+                mqtt_exception_raised = False
+            log_slow_operation(
+                "MQTT reconnect attempt", time.monotonic() - mqtt_reconnect_start
             )
+
+            # Priority 3: Run state machine
+            try:
+                machine.update()
+
+                if ha.refresh_discovery:
+                    discovery_start = time.monotonic()
+                    logger.info("Re-publishing HA discovery payload and state topics")
+                    discovery = ha.mqtt_discovery()
+                    mqtt_client.publish(discovery["topic"], discovery["message"])
+                    # Give HA time to subscribe to availability topic
+                    time.sleep(0.25)
+                    encoder_status = check_encoder(hardware)
+                    mqtt_client.publish(ha.topic_prefix + "/status", "online")
+                    ha.send_encoder_status(*encoder_status)
+                    ha.update_camera_ok(not camera_exception_raised)
+                    ha.refresh_discovery = False
+                    log_slow_operation(
+                        "HA discovery refresh", time.monotonic() - discovery_start
+                    )
+
+                ha_update_start = time.monotonic()
+                ha.update()
+                log_slow_operation("HA update", time.monotonic() - ha_update_start)
+
+                save_start = time.monotonic()
+                burn_store.maybe_save(machine, stovelink_encoder.sequence_id)
+                log_slow_operation("Burn state save", time.monotonic() - save_start)
+
+                # Priority 4: Update thermal camera at configured interval
+                if current_time - last_camera_update >= THERMAL_CAMERA_INTERVAL:
+                    try:
+                        # First, check and monitor free memory. Done here to minimize overhead.
+                        ha.update_mem_free(check_mem_free())
+                        # The actual thermal camera update
+                        thermal_start = time.monotonic()
+                        if do_thermal_camera_stuff(camera_exception_raised):
+                            camera_exception_raised = False
+                        log_slow_operation(
+                            "Thermal camera capture", time.monotonic() - thermal_start
+                        )
+                        last_camera_update = current_time
+
+                    except OSError as e:
+                        # I2C communication error with thermal camera (e.g., errno 32: broken pipe)
+                        thermal_recovery.report_error(e)
+                        last_camera_update = (
+                            current_time
+                            - THERMAL_CAMERA_INTERVAL
+                            + 1  # Update time to prevent rapid retries
+                        )
+                        camera_exception_raised = True
+                        ha.update_camera_ok(False)
+
+            except MMQTTException as e:
+                # Log but don't try to reconnect here - let managers handle it
+                # Use the mqtt_logger with file and stream handler as normal logger has mqtt_handler
+                mqtt_handler.suspend()
+                logger.error("MQTT error during state update: %s", e)
+                hardware.led_on()
+                mqtt_exception_raised = True
+            except OSError as e:
+                # Network/IO errors not related to thermal camera
+                mqtt_handler.suspend()
+                logger.error("Network/IO error during state update: %s", e)
+                hardware.led_on()
+                mqtt_exception_raised = True
+                # Log the stack trace exactly once
+                if str(e) not in oserror_exception_raised:
+                    import traceback
+
+                    stack_trace = traceback.format_exception(e, chain=True)
+                    logger.error(
+                        "OSError stack trace: %s\n%s", str(e), "\n".join(stack_trace)
+                    )
+                    oserror_exception_raised.add(str(e))
+            except Exception as e:
+                mqtt_logger.error("Unexpected error in main loop: %s", e)
+                hardware.led_on()
+                # Log the stack trace exactly once
+                if str(e) not in unexpected_exception_raised:
+                    import traceback
+
+                    stack_trace = traceback.format_exception(e, chain=True)
+                    mqtt_logger.error(
+                        "Unexpected error stack trace: %s\n%s",
+                        str(e),
+                        "\n".join(stack_trace),
+                    )
+                    unexpected_exception_raised.add(str(e))
+
+            # Log slow main loop iterations
+            loop_duration = time.monotonic() - current_time
+            log_slow_operation("Main loop iteration", loop_duration)
+
+            # Small sleep to prevent busy-waiting. CircuitPython runs its background tasks (WiFi, web
+            # workflow, mDNS) during the sleep, so a network stall shows up here, not in a timed step.
+            sleep_start = time.monotonic()
+            time.sleep(0.1)
+            sleep_duration = time.monotonic() - sleep_start
+            if sleep_duration > 5.0:
+                logger.warning(
+                    "Main loop stalled %.1fs in background tasks (RSSI %s)",
+                    sleep_duration,
+                    wifi.radio.ap_info.rssi if wifi.radio.ap_info else "-",
+                )
+    finally:
+        # Leaving the main loop (Ctrl-C, a reload, an error): let file writes reload the device
+        # again, so a fix can still be deployed, and save the state for the next run
+        supervisor.runtime.autoreload = True
+        try:
+            burn_store.save(machine, stovelink_encoder.sequence_id)
+        except Exception:
+            pass

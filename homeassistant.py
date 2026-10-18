@@ -176,6 +176,18 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "reload": {
+                    "name": "Reload",
+                    "p": "button",
+                    "unique_id": f"{self.device_name}_reload",
+                    "command_topic": f"{self.topic_prefix}/command",
+                    "payload_press": "reload",
+                    "ent_cat": "config",
+                    "icon": "mdi:restart",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "operating_state": {
                     "name": "State Machine",
                     "p": "select",

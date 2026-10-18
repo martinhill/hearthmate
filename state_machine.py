@@ -79,6 +79,12 @@ class StateMachine:
         self.previous_state = self.current_state
         self.current_state = state_name
 
+    def restore_state(self, state_name, *args):
+        """Switch to a state that resumes rather than starts, via its restore(machine, *args),
+        e.g. after a soft reboot"""
+        self._transition(state_name)
+        self.states[self.current_state].restore(self, *args)
+
     def push_state(self, state_name):
         """Push the current state to the stack and switch to a new state"""
         if self.current_state:

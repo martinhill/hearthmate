@@ -48,7 +48,7 @@ STOVELINK_DATA = os.environ.get("STOVELINK_DATA", "/mnt/burnie")
 FIRMWARE = [
     "code.py", "temperature_target.py", "vent_closer.py", "state_machine.py", "airvent.py",
     "hardware.py", "thermal_camera.py", "homeassistant.py", "connections.py", "vent_mover.py",
-    "stovelink.py", "measurement_buffer.py", "hw_test.py",
+    "stovelink.py", "measurement_buffer.py", "hw_test.py", "burn_state.py",
 ]
 
 
@@ -186,7 +186,13 @@ def cmd_check(args):
     for line in result.stdout.splitlines():
         if "All tests" in line or "✗" in line:
             print(f"service tests: {line.strip()}")
-    sys.exit(1 if failed or result.returncode else 0)
+    # Soft reboots mid-burn: save, rebuild, restore, continue (~45 s)
+    restart = subprocess.run([sys.executable, "restart.py"], cwd=SIMULATION,
+                             capture_output=True, text=True)
+    for line in restart.stdout.splitlines():
+        if "FAIL" in line or "checks passed" in line:
+            print(f"restart: {line.strip()}")
+    sys.exit(1 if failed or result.returncode or restart.returncode else 0)
 
 
 # --- live device (read-only MQTT) --------------------------------------------------------------

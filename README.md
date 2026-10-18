@@ -40,18 +40,34 @@ uv sync                 # editor environment: Blinka + CircuitPython libraries, 
 ```
 
 - `scripts/deploy.sh`: install or update the firmware over the web workflow. `-n` only shows
-  what differs, `--libs` also installs `requirements.txt`. Uploading reloads the device, so the
-  controller drops to idle and the burn file splits: deploy between burns.
+  what differs, `--libs` also installs `requirements.txt`. After uploading it sends the reload
+  command over MQTT (broker credentials in `~/.config/mosquitto_pub`) and reports whether the
+  device resumed the burn; see below.
 - `scripts/tmux.sh`: watch the device log and state topics over MQTT (iTerm2: `tmux -CC`).
   Broker credentials go in `~/.config/mosquitto_sub`.
 - `simulation/`: stove models fitted to recorded burns and closed-loop tests of `temp_control`
   (run with `uv run --project marimo`). `marimo/` has the burn data viewer.
 - `service/`: the StoveLink service that records thermal frames and the device log to HDF5.
 
+## Restarts during a burn
+
+A soft reboot (a deploy, the reload command or HA's Reload button, Ctrl-D in the REPL) resumes
+the burn where it was: mode, controller phase and memory, burn timer (so the burn file doesn't
+split), target, Closing Duration and step parameters. The device saves that state to the
+retained topic `<MQTT_TOPIC>/controller/saved` on every phase change and vent move, and at least
+every 30 s. At boot it resumes only if CircuitPython reports a reload rather than a hard start,
+the device clock shows the state is under 5 minutes old (the clock restarts at 2000-01-01 after
+a hard reset), and the vent is where it was saved. Otherwise, e.g. after a power cut, it starts
+in idle as before. See `burn_state.py`; `simulation/restart.py` tests it.
+
+Autoreload is off while the firmware runs (`AUTORELOAD`), so a deploy reloads once with all
+files in place. It is turned back on whenever the main loop exits, so a fixed upload still
+reloads code that crashed.
+
 `settings.toml` on the device holds WiFi, MQTT and web workflow credentials and isn't in the
 repo. Firmware settings are read with `os.getenv` there, e.g. `AUTO_MODE`, `VENT_CLOSE_TIME`,
-the `TT_*` temperature control settings, and `WIFI_POWER_MANAGEMENT` (`none` by default, `min`
-is the CircuitPython default).
+the `TT_*` temperature control settings, `WIFI_POWER_MANAGEMENT` (`none` by default, `min`
+is the CircuitPython default) and `AUTORELOAD` (`off` by default).
 
 ## TODO
 
@@ -67,6 +83,5 @@ is the CircuitPython default).
 - Detect a stalled or slipping motor and report it in HA: per-move position error is already
   published, but nothing acts on it, and nothing tracks slippage over a full open→closed travel
   ((steps_needed - actual_steps) / steps_needed). End stops make a plain exception unsafe.
-- Recover the StoveLink sequence, burn time and controller state after a reboot (MQTT retain)
 - `temp_control` closes quickly early in the burn; check against more burns.
 - Type-check the firmware (e.g. pyright in the root uv environment)

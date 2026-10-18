@@ -233,6 +233,65 @@ class TemperatureTargetFunction(VentFunctionABC):
     def inverse(self, position):
         raise NotImplementedError("TemperatureTargetFunction has no time trajectory")
 
+    def save_state(self):
+        "Controller and filter state to resume after a soft reboot (see VentFunctionABC)"
+        state = super().save_state()
+
+        def rnd(value, digits):
+            return None if value is None else round(value, digits)
+
+        state.update({
+            "target": self.target,
+            "phase": self.phase,
+            "position": rnd(self.position, 4),
+            "pi_position": rnd(self.pi_position, 4),
+            "target_reached": self.target_reached,
+            "peak_temp": rnd(self.peak_temp, 2),
+            "last_error": rnd(self.last_error, 2),
+            "last_control_age": self._age(self.last_control_time),
+            "close_log": [[self._age(t), round(p, 4)] for t, p in self.close_log],
+            "confirm_timer": self.confirm_timer,
+            "rescues": self.rescues,
+            "rescue_age": self._age(self.rescue_time),
+            "ignition_low": rnd(self.ignition_low, 2),
+            "stall_low": rnd(self.stall_low, 2),
+            "fallback_age": self._age(self.fallback_time),
+            "filtered_temp": rnd(self.filtered_temp, 2),
+            "history": [[self._age(t), round(y, 2)] for t, y in self.history],
+            "last_sample_age": self._age(self.last_sample_time),
+            "slope": self.slope,
+            "trend": self.trend,
+            "predicted_temp": rnd(self.predicted_temp, 2),
+        })
+        return state
+
+    def restore_state(self, state, downtime):
+        super().restore_state(state, downtime)
+        self.target = state["target"]
+        self.phase = state["phase"]
+        self.position = state["position"]
+        self.pi_position = state["pi_position"]
+        self.target_reached = state["target_reached"]
+        self.peak_temp = state["peak_temp"]
+        self.last_error = state["last_error"]
+        self.last_control_time = self._time(state["last_control_age"])
+        self.close_log = [(self._time(age), p) for age, p in state["close_log"]]
+        self.confirm_timer = state["confirm_timer"]
+        self.rescues = state["rescues"]
+        self.rescue_time = self._time(state["rescue_age"])
+        self.ignition_low = state["ignition_low"]
+        self.stall_low = state["stall_low"]
+        self.fallback_time = self._time(state["fallback_age"])
+        self.filtered_temp = state["filtered_temp"]
+        self.history = [(self._time(age), y) for age, y in state["history"]]
+        self.last_sample_time = self._time(state["last_sample_age"])
+        self.slope = state["slope"]
+        self.trend = state["trend"]
+        self.predicted_temp = state["predicted_temp"]
+        self.spike_count = 0
+        self.stale_warned = False
+        self._log_event("resumed after %ds" % int(downtime))
+
     def get_position(self):
         if self.start_time is None or self.last_sample_time is None:
             return self.position
