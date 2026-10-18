@@ -348,11 +348,13 @@ class TemperatureTargetFunction(VentFunctionABC):
         self.slope = state["slope"]
         self.trend = state["trend"]
         self.predicted_temp = state["predicted_temp"]
-        self.baseline = state["baseline"]
-        self.trim = state["trim"]
-        self.probe_sign = state["probe_sign"]
-        self.probe_start = self._time(state["probe_age"])
-        self.probe_rates = [(s, r) for s, r in state["probe_rates"]]
+        # Added after the first resumable firmware: a state saved before a deploy that adds a
+        # field must still restore, so fields added later default when missing
+        self.baseline = state.get("baseline", self.position)
+        self.trim = state.get("trim", 0.0)
+        self.probe_sign = state.get("probe_sign", 0)
+        self.probe_start = self._time(state.get("probe_age"))
+        self.probe_rates = [(s, r) for s, r in state.get("probe_rates", [])]
         self.spike_count = 0
         self.stale_warned = False
         self._log_event("resumed after %ds" % int(downtime))

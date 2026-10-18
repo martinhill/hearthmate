@@ -270,7 +270,23 @@ def main():
         checks += 1
         failures += not good
         print(f"{'ok  ' if good else 'FAIL'} {name}: {'resume' if ok else 'idle'} - {why}")
+    # A state saved by older firmware, before fields were added, must still restore (a deploy
+    # mid-burn): drop the fields added since the first resumable version
     clock.t = 5010
+    old = json.loads(broker.retained[Device.TOPIC])
+    for key in ("baseline", "trim", "probe_sign", "probe_age", "probe_rates"):
+        old["function"].pop(key, None)
+    dev2 = Device(hw, broker, clock, "temp_control")
+    ok, why = dev2.store.check(old, "AUTO_RELOAD", 0.0)
+    try:
+        dev2.store.restore(dev2.machine, old)
+        restored = dev2.machine.current_state == "temp_control"
+    except (KeyError, TypeError) as e:
+        restored, why = False, f"{type(e).__name__}: {e}"
+    checks += 1
+    failures += not (ok and restored)
+    print(f"{'ok  ' if ok and restored else 'FAIL'} state from older firmware: "
+          f"{'resumed' if restored else 'not resumed'} - {why}")
     print(f"saved state size: {len(broker.retained[Device.TOPIC])} bytes")
 
     print(f"largest vent difference after a resume: {worst_all:.3f} (one deadband is about "
