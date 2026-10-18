@@ -32,6 +32,7 @@ import argparse
 import base64
 import json
 import logging
+import os
 import re
 import shutil
 import struct
@@ -291,6 +292,7 @@ class HDF5Storage:
         for line in lines:
             self.log_file.write(line + "\n")
         self.log_file.flush()
+        os.fsync(self.log_file.fileno())
 
     def open(self, filename: Optional[str] = None):
         """Open HDF5 file for writing."""
@@ -356,8 +358,10 @@ class HDF5Storage:
         self.file["tmp36_temps"][current_size] = decoded_packet["tmp36_temperature"]
         self.file["combustion_times"][current_size] = decoded_packet["combustion_time"]
 
-        # Flush to disk
+        # Flush to disk. fsync too: on a network share (CIFS) written data otherwise stays in the
+        # client cache until the file is closed at rotation, and a crash would lose the cycle.
         self.file.flush()
+        os.fsync(self.file.id.get_vfd_handle())
 
     def close(self):
         """Close HDF5 file and log sidecar."""
