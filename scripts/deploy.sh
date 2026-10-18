@@ -157,7 +157,8 @@ done
 
 # Reload once, now that every file is in place, and wait for the device to say how it came back
 topic=${HEARTHMATE_TOPIC:?Set HEARTHMATE_TOPIC in .env to the device MQTT_TOPIC}
-broker=(${HEARTHMATE_MQTT_HOST:+-h $HEARTHMATE_MQTT_HOST})
+broker=()
+[[ -z ${HEARTHMATE_MQTT_HOST:-} ]] || broker=(-h "$HEARTHMATE_MQTT_HOST")
 mosquitto_pub=${commands[mosquitto_pub]:-}
 mosquitto_sub=${commands[mosquitto_sub]:-}
 if [[ -n $mosquitto_sub ]]; then
@@ -166,7 +167,8 @@ if [[ -n $mosquitto_sub ]]; then
     sleep 1
 fi
 if [[ -z $mosquitto_pub ]] || ! $mosquitto_pub $broker -t "$topic/command" -m reload 2>/dev/null; then
-    [[ -n ${sub_pid:-} ]] && kill $sub_pid 2>/dev/null
+    # The subscriber may have exited already (same broker, same error)
+    [[ -z ${sub_pid:-} ]] || kill $sub_pid 2>/dev/null || true
     print "Could not send the reload command (needs mosquitto_pub and ~/.config/mosquitto_pub)."
     print "Press Reload in Home Assistant to run the new code."
     exit 0
