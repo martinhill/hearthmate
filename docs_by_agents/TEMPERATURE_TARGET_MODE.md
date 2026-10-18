@@ -128,6 +128,8 @@ steady closing drift.
   return. This avoids holding e.g. a fully open vent on a fresh load while the camera is out.
 - After any gap, a single control update acts on at most 30 s, so a blocked main loop doesn't
   release a minute's worth of closing at once.
+- Camera recovery power-cycles the STEMMA QT port (`NEOPIXEL_I2C_POWER`) from the second attempt
+  on, which resets a hung MLX90640 the way a soft reboot does. It retries at least every 60 s.
 
 **Logging.** Every phase change and controller action (reload, early close, back-off, manual
 move) writes one INFO line from the `temperature_target` logger to the MQTT log and file log:

@@ -450,14 +450,19 @@ if __name__ == "__main__":
 
     # Initialize thermal camera recovery manager
     def thermal_camera_factory():
+        # A plain reinitialize first. A hung camera only responds again after a power cycle (as a
+        # soft reboot does), so from the second attempt on, cut power to its STEMMA QT port first.
+        if thermal_recovery.recovery_failures >= 2:
+            thermal_camera.power_cycle()
         thermal_camera.reinitialize()
         return thermal_camera
 
+    # temp_control depends on the camera, so retry at least every minute
     thermal_recovery = I2CDeviceRecoveryManager(
         thermal_camera_factory,
         device_name="MLX90640 Thermal Camera",
         base_delay=5,
-        max_delay=300,
+        max_delay=60,
     )
     thermal_recovery.device = thermal_camera
 

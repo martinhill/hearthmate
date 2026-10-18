@@ -1,6 +1,7 @@
 import time
 import board
 import binascii
+import digitalio
 from ulab import numpy as np
 import adafruit_logging as logging
 
@@ -130,6 +131,31 @@ class ThermalCamera:
             self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_32_HZ
         else:
             self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_64_HZ
+
+    def power_cycle(self, off_time=0.5, boot_time=1.0):
+        """
+        Cut and restore power to the STEMMA QT port, which resets a hung camera the way a soft
+        reboot does. On the Feather ESP32 V2 the port (and the onboard NeoPixel) is powered
+        through NEOPIXEL_I2C_POWER; the encoder and motor FeatherWing are not, and the camera
+        must be the only device on the port. No other I2C traffic happens meanwhile, as the main
+        loop is single threaded; keep off_time short since the unpowered camera stays on the bus.
+
+        Returns:
+            bool: True if the port was power cycled, False if the power pin is unavailable
+        """
+        try:
+            if getattr(self, "_power", None) is None:
+                self._power = digitalio.DigitalInOut(board.NEOPIXEL_I2C_POWER)
+            self._power.switch_to_output(value=False)
+            time.sleep(off_time)
+            self._power.value = True
+            time.sleep(boot_time)
+            logger.info("STEMMA QT port power cycled")
+            return True
+        except (AttributeError, ValueError, RuntimeError) as e:
+            # No such pin on this board, or it is claimed elsewhere
+            logger.warning("Cannot power cycle STEMMA QT port: %s", e)
+            return False
 
     def reinitialize(self):
         """
@@ -409,6 +435,9 @@ class MockThermalCamera(ThermalCamera):
         self._np_frame = np.zeros(768, dtype=np.float)
 
         logger.info("MockThermalCamera initialized (simulated)")
+
+    def power_cycle(self, off_time=0.5, boot_time=1.0):
+        return False
 
     def capture_frame(self):
         """
