@@ -434,6 +434,7 @@ if __name__ == "__main__":
     # Set up MQTT and file logging handlers
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/log")
     setup_loggers(mqtt_client, mqtt_handler)
+    logger.info("WiFi power management: %s", wifi_manager.apply_power_management())
 
     # Get the hardware interface
     hardware = get_hardware()
@@ -620,5 +621,14 @@ if __name__ == "__main__":
         loop_duration = time.monotonic() - current_time
         log_slow_operation("Main loop iteration", loop_duration)
 
-        # Small sleep to prevent busy-waiting
+        # Small sleep to prevent busy-waiting. CircuitPython runs its background tasks (WiFi, web
+        # workflow, mDNS) during the sleep, so a network stall shows up here, not in a timed step.
+        sleep_start = time.monotonic()
         time.sleep(0.1)
+        sleep_duration = time.monotonic() - sleep_start
+        if sleep_duration > 5.0:
+            logger.warning(
+                "Main loop stalled %.1fs in background tasks (RSSI %s)",
+                sleep_duration,
+                wifi.radio.ap_info.rssi if wifi.radio.ap_info else "-",
+            )

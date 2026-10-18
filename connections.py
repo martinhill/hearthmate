@@ -31,6 +31,26 @@ class WiFiConnectionManager:
         self.current_delay = base_delay
         self.last_reconnect_attempt = 0
         self.connection_failures = 0
+        # WiFi power save: "none", "min" (CircuitPython default) or "max". In "min" the radio
+        # sleeps between AP beacons; the main loop has stalled for ~60 s at a time with it.
+        self.power_management = os.getenv("WIFI_POWER_MANAGEMENT", "none").upper()
+
+    def apply_power_management(self):
+        """
+        Set wifi.radio.power_management from WIFI_POWER_MANAGEMENT, if the build supports it.
+
+        Returns:
+            str: what was set, or why it wasn't, for logging
+        """
+        modes = getattr(wifi, "PowerManagement", None)
+        mode = getattr(modes, self.power_management, None) if modes else None
+        if mode is None:
+            return "%s not supported" % self.power_management.lower()
+        try:
+            wifi.radio.power_management = mode
+        except (AttributeError, NotImplementedError, ValueError) as e:
+            return "cannot set %s: %s" % (self.power_management.lower(), e)
+        return self.power_management.lower()
 
     def is_connected(self):
         """Check if WiFi is currently connected"""
@@ -71,7 +91,10 @@ class WiFiConnectionManager:
                 self.current_delay,
             )
             wifi.radio.connect(self.ssid, self.password)
-            logger.info("WiFi reconnected successfully")
+            logger.info(
+                "WiFi reconnected successfully; power management: %s",
+                self.apply_power_management(),
+            )
             self.current_delay = self.base_delay
             self.connection_failures = 0
             return True

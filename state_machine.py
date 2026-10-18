@@ -131,8 +131,9 @@ class StateMachine:
             # Track gaps between mqtt_loop calls
             if self._last_loop_time is not None:
                 gap = loop_start - self._last_loop_time
-                # Warn if gap exceeds 60 seconds (keep-alive is 300s, so this gives buffer)
-                if gap > 60.0:
+                # Warn on gaps of 30 s and more; the keep-alive is 300 s, but recurring ~60 s
+                # stalls need to show up in the INFO-level logs
+                if gap > 30.0:
                     logger.warning(
                         "MQTT loop gap: %.1fs in state '%s' (sub-state: %s)",
                         gap,
