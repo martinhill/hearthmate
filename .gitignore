@@ -14,3 +14,4 @@ simulation/*.png
 
 # Local settings for desktop scripts; .env.example is the tracked template
 .env
+.envrc
