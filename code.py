@@ -487,7 +487,8 @@ if __name__ == "__main__":
     # Set up MQTT and file logging handlers
     mqtt_handler = MQTTHandler(mqtt_client, mqtt_topic + "/log")
     setup_loggers(mqtt_client, mqtt_handler)
-    logger.info("WiFi power management: %s", wifi_manager.apply_power_management())
+    # Logged once MQTT is up, so it reaches the burn log too
+    wifi_power_management = wifi_manager.apply_power_management()
 
     # Get the hardware interface
     hardware = get_hardware()
@@ -530,6 +531,7 @@ if __name__ == "__main__":
         logger.error("Failed to connect to MQTT: %s", e)
 
     logger.info("Step parameters: %s", hardware.step_params)
+    logger.info("WiFi power management: %s", wifi_power_management)
 
     # Integrate with Home Assistant
     logger.info("Setting up Home Assistant...")
