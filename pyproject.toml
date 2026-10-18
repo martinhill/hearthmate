@@ -1,0 +1,14 @@
+[project]
+name = "hearthmate"
+version = "0.1.0"
+description = "Wood stove air vent controller (CircuitPython); desktop editor and tooling environment"
+requires-python = ">=3.13"
+dependencies = [
+    "adafruit-circuitpython-itertools>=2.1.6",
+    "adafruit-circuitpython-logging>=5.6.0",
+    "adafruit-circuitpython-minimqtt>=8.0.3",
+    "adafruit-circuitpython-motorkit>=1.6.19",
+    "adafruit-circuitpython-neopixel>=6.3.18",
+    "circup>=3.1.0",
+    "python-dotenv>=1.2.4",
+]

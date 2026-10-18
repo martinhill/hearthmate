@@ -5,6 +5,8 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device
+- Desktop environment: `uv sync` (root `pyproject.toml`): Blinka and the CircuitPython libraries for
+  editor completion, circup and python-dotenv. Simulation/notebooks use `marimo/`, the service `service/`
 - Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs `requirements.txt`
   with circup). It reloads the device, so deploy between burns.
 
