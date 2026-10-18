@@ -76,6 +76,10 @@ Key configuration options in the `ExecStart` line:
 - `--hdf5-file`: Path to HDF5 storage file
 - `--username`: MQTT username (optional)
 - `--password`: MQTT password (optional)
+- `--log-topic`: Device log topic, e.g. `burnie/log` (optional; writes a `.log` file next to each
+  HDF5 file, see below)
+- `--log-exclude`: Regular expression of device log lines not to write (default: the per-packet
+  `StoveLink packet:` echo, which the HDF5 file already holds; `''` keeps all lines)
 
 Example with authentication:
 
@@ -143,6 +147,32 @@ thermal_data.h5
 ```
 
 Where N is the number of frames stored.
+
+### Device log
+
+With `--log-topic burnie/log`, the device's MQTT log lines are written to `current_cycle.log`
+next to `current_cycle.h5`. When a new combustion cycle starts, both files are archived together,
+e.g. `202610/17/20261017-02.h5` and `202610/17/20261017-02.log`.
+
+Each line is tab separated:
+
+```
+<received wall time>  <sequence_id>  <combustion_time>  <device log line>
+```
+
+`sequence_id` and `combustion_time` belong to the first StoveLink packet received after the
+log line, so the line was logged just before that frame and can be matched to the HDF5 datasets
+of the same name. Lines are held until that packet arrives (at most 30 s), which also files the
+reload lines at the start of a cycle with the new cycle. `-` means no packet followed (camera or
+device offline). The device clock has no real time; the received time is the service's.
+
+The MQTT log is best effort: the device suspends it during MQTT errors, so the device's own
+`logs` file remains the complete record for those periods.
+
+```bash
+# temp_control transitions of a burn with the frame they precede
+grep temp_control /mnt/burnie/202610/17/20261017-02.log | cut -f2,3,4
+```
 
 ### Accessing the data:
 

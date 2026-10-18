@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test suite for StoveLink service components.
-Tests ThermalImageGenerator image flip and encoding.
+Tests ThermalImageGenerator image flip and encoding, and the device log sidecar.
 """
 
 import sys
@@ -12,8 +12,12 @@ from io import BytesIO
 # Add service directory to path
 sys.path.insert(0, "/Users/martin/Hacking/hearthmate/service")
 
-from stovelink_service import ThermalImageGenerator, StoveLinkDecoder
+from stovelink_service import ThermalImageGenerator, StoveLinkDecoder, StoveLinkService
 import struct
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 class TestThermalImageGenerator:
@@ -238,11 +242,12 @@ class TestThermalImageGenerator:
 
         # Create a test packet
         header = struct.pack(
-            "<IIfHH",
+            "<IIfHfH",
             0,  # sequence_id
             1000,  # timestamp_ms
             50.0,  # vent_pct
             300,  # combustion_time
+            20.0,  # tmp36_temp
             0,
         )  # reserved
 
@@ -314,7 +319,163 @@ class TestThermalImageGenerator:
             return False
 
 
+def make_packet(sequence_id, combustion_time):
+    "StoveLink packet with a flat 100C frame"
+    header = struct.pack("<IIfHfH", sequence_id, sequence_id * 10000, 50.0, combustion_time, 20.0, 0)
+    return header + struct.pack("<768H", *([1000] * 768))
+
+
+class TestDeviceLog:
+    """Test cases for the device log sidecar written next to each HDF5 file"""
+
+    def __init__(self):
+        self.test_count = 0
+        self.passed_count = 0
+        self.client = SimpleNamespace(publish=lambda *args, **kwargs: None)
+
+    def make_service(self, hdf5_dir, **kwargs):
+        service = StoveLinkService(
+            mqtt_host="localhost",
+            mqtt_port=1883,
+            input_topic="burnie/stovelink",
+            dynamic_topic="burnie/thermal_camera/dynamic",
+            static_topic="burnie/thermal_camera/static",
+            static_min_temp=100.0,
+            static_max_temp=350.0,
+            hdf5_dir=hdf5_dir,
+            log_topic="burnie/log",
+            **kwargs,
+        )
+        service.storage.open()
+        return service
+
+    def send(self, service, topic, payload):
+        message = SimpleNamespace(topic=topic, payload=payload)
+        service._on_message(self.client, None, message)
+
+    def send_log(self, service, text):
+        self.send(service, "burnie/log", text.encode())
+
+    def send_packet(self, service, sequence_id, combustion_time):
+        self.send(service, "burnie/stovelink", make_packet(sequence_id, combustion_time))
+
+    def read_log(self, path):
+        return [line.split("\t") for line in Path(path).read_text().splitlines()]
+
+    def test_lines_stamped_with_next_packet(self):
+        """Log lines are held until the next packet and stamped with its sequence and time"""
+        print("\n=== Device log 1: Lines Stamped With Next Packet ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 1, 100)
+            self.send_log(service, "INFO vent_closer: Closing to position 0.500")
+            self.send_log(service, "DEBUG stovelink: StoveLink packet: seq=2, ts=1, vent=50.0%")
+            log_path = Path(tmp) / "current_cycle.log"
+            assert not log_path.exists(), "Lines should be held until the next packet"
+            self.send_packet(service, 2, 110)
+            service.storage.close()
+
+            rows = self.read_log(log_path)
+            print(f"Log rows: {rows}")
+            assert len(rows) == 1, "The StoveLink packet echo should be excluded"
+            received, seq, comb, text = rows[0]
+            assert (seq, comb) == ("2", "110"), f"Expected next packet 2/110, got {seq}/{comb}"
+            assert text == "INFO vent_closer: Closing to position 0.500"
+            assert "T" in received, "Received time should be an ISO timestamp"
+        print("✓ Lines stamped with next packet test passed")
+        self.passed_count += 1
+
+    def test_rotation_moves_log_with_hdf5(self):
+        """On a combustion time reset, the log is archived with the HDF5 file and the lines that
+        preceded the reset packet go to the new cycle"""
+        print("\n=== Device log 2: Rotation Moves Log With HDF5 ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 1, 3000)
+            self.send_log(service, "INFO temperature_target: temp_control regulate -> coals")
+            self.send_packet(service, 2, 3010)
+            self.send_log(service, "INFO temperature_target: temp_control start: reload")
+            self.send_packet(service, 3, 0)  # combustion time reset: new cycle
+            service.storage.close()
+
+            archived = list(Path(tmp).glob("*/*/*.h5"))
+            assert len(archived) == 1, f"Expected one archived HDF5 file, got {archived}"
+            old_log = archived[0].with_suffix(".log")
+            assert old_log.exists(), f"Log should be archived next to {archived[0].name}"
+            old_rows = self.read_log(old_log)
+            new_rows = self.read_log(Path(tmp) / "current_cycle.log")
+            print(f"Archived log: {old_rows}")
+            print(f"New cycle log: {new_rows}")
+            assert [r[3] for r in old_rows] == [
+                "INFO temperature_target: temp_control regulate -> coals"
+            ]
+            assert [r[3] for r in new_rows] == [
+                "INFO temperature_target: temp_control start: reload"
+            ]
+            assert (new_rows[0][1], new_rows[0][2]) == ("3", "0")
+        print("✓ Rotation moves log with HDF5 test passed")
+        self.passed_count += 1
+
+    def test_flush_without_packets(self):
+        """Lines are written with '-' stamps when no packet follows within the hold time"""
+        print("\n=== Device log 3: Flush Without Packets ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp, log_hold_seconds=30.0)
+            with mock.patch("stovelink_service.time.monotonic", side_effect=[0.0, 0.0, 31.0, 31.0]):
+                self.send_log(service, "WARNING __main__: Slow operation")
+                self.send_log(service, "Traceback (most recent call last):\n  File x")
+            service.storage.close()
+
+            text = (Path(tmp) / "current_cycle.log").read_text()
+            print(f"Log text: {text!r}")
+            lines = text.splitlines()
+            assert lines[0].split("\t")[1:] == ["-", "-", "WARNING __main__: Slow operation"]
+            assert lines[2] == "\t\t\t  File x", "Continuation lines should be indented"
+        print("✓ Flush without packets test passed")
+        self.passed_count += 1
+
+    def test_packets_still_processed(self):
+        """Packets on the input topic are still decoded and stored with a log topic set"""
+        print("\n=== Device log 4: Packets Still Processed ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 7, 50)
+            frames = service.storage.file["mlx90640_frames"].shape[0]
+            service.storage.close()
+            assert service.packet_count == 1 and frames == 1, "Packet should be stored"
+        print("✓ Packets still processed test passed")
+        self.passed_count += 1
+
+    def run_all_tests(self):
+        print("=" * 60)
+        print("Device Log Sidecar Test Suite")
+        print("=" * 60)
+        try:
+            self.test_lines_stamped_with_next_packet()
+            self.test_rotation_moves_log_with_hdf5()
+            self.test_flush_without_packets()
+            self.test_packets_still_processed()
+            print("\n" + "=" * 60)
+            print(f"✓ All tests passed! ({self.passed_count}/{self.test_count})")
+            print("=" * 60)
+            return True
+        except AssertionError as e:
+            print(f"\n✗ Test failed: {e}")
+            print(f"Tests passed: {self.passed_count}/{self.test_count}")
+            return False
+        except Exception as e:
+            print(f"\n✗ Unexpected error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+
 if __name__ == "__main__":
-    tester = TestThermalImageGenerator()
-    success = tester.run_all_tests()
+    success = TestThermalImageGenerator().run_all_tests()
+    success = TestDeviceLog().run_all_tests() and success
     sys.exit(0 if success else 1)
