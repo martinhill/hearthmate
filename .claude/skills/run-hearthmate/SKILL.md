@@ -81,9 +81,10 @@ uv run --project marimo python .claude/skills/run-hearthmate/driver.py burnlog -
 
 ## Run (human path)
 
-`scripts/tmux.sh` opens a tmux session with the filtered device log, the state topics and a shell.
-In iTerm2 it uses `tmux -CC`. Agents can run it detached and read the panes; give it a throwaway
-session name so a human's session isn't touched:
+`scripts/tmux.sh` opens a tmux window `mqtt` with the filtered device log, the state topics and a
+shell, adding it to the session if one exists (e.g. created by an iTerm2 profile with `tmux -CC`).
+In iTerm2 it attaches with `tmux -CC`, unless iTerm2 already shows the session. Agents can run it
+detached and read the panes; give it a throwaway session name so a human's session isn't touched:
 
 ```bash
 HEARTHMATE_SESSION=hm-agent TMUX= scripts/tmux.sh </dev/null >/dev/null 2>&1; sleep 2; tmux capture-pane -p -J -t hm-agent:0.0 | grep -v '^$' | tail -3; tmux kill-session -t hm-agent
