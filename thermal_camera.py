@@ -249,6 +249,27 @@ class ThermalCamera:
             "median": np.median(npframe),
         }
 
+    def subpage_mismatch(self, frame: np.ndarray[float] = None) -> float:
+        """Difference in degC between the mean of the two chess-pattern subpages.
+
+        The MLX90640 reads a frame as two interleaved subpages in a chessboard pattern. A large
+        difference between them means the subpages came from different moments (e.g. a
+        transient read error) and the frame shows a checkerboard artifact.
+        Uses per-row slices of the flat 24x32 array to avoid allocating a reshaped copy.
+        """
+        if frame is None:
+            frame = self.get_np_frame()
+        width = self.width
+        sum_a = 0.0
+        sum_b = 0.0
+        for row in range(self.height):
+            start = row * width
+            offset = row % 2
+            sum_a += np.sum(frame[start + offset : start + width : 2])
+            sum_b += np.sum(frame[start + 1 - offset : start + width : 2])
+        half = self.width * self.height / 2
+        return abs(sum_a - sum_b) / half
+
     def frame_to_rgb(self, frame=None, colormap="ironbow"):
         """
         Convert thermal frame to RGB data for image encoding.

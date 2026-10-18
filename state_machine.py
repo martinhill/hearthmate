@@ -159,11 +159,10 @@ class StateMachine:
                 raise
 
     def _get_substate_name(self):
-        """Helper to get substate name for vent_closer composite state"""
-        if self.current_state == "vent_closer" and "vent_closer" in self.states:
-            vc_state = self.states["vent_closer"]
-            if hasattr(vc_state, "machine"):
-                return vc_state.machine.current_state
+        """Helper to get substate name for composite states (timed_close, temp_control)"""
+        state = self.states.get(self.current_state)
+        if hasattr(state, "machine"):
+            return state.machine.current_state
         return "N/A"
 
     def get_state(self):

@@ -210,9 +210,13 @@ class Closed(State):
     then waits until the air vent is moved to full open and resets function.
     """
 
-    def __init__(self, open_position_threshold = 0.1, extra_steps = 2, sensitivity = 0.001):
+    def __init__(
+        self, open_position_threshold = 0.1, extra_steps = 2, sensitivity = 0.001,
+        reopen_threshold = 0.98,
+    ):
         super().__init__("closed")
         self.open_position_threshold = open_position_threshold
+        self.reopen_threshold = reopen_threshold
         self.extra_steps = extra_steps
         self.sensitivity = sensitivity
 
@@ -248,6 +252,13 @@ class Closed(State):
             func = machine.data["function"]
             func.start(vent_position)
             machine.set_state("monitoring")
+        elif machine.current_state == "closed":
+            # The function may ask for the vent to open again, e.g. a temp_control back-off when
+            # the fire sags after closing. The Closing state moves in either direction.
+            ideal_position = machine.data["function"].get_position()
+            if ideal_position < self.reopen_threshold:
+                logger.info("Closed: function requests position %.3f", ideal_position)
+                machine.set_state("closing")
 
     def handle_move_request(self, machine, target_position):
         "Always allow manual move requests while closed"
@@ -263,8 +274,8 @@ class VentCloser(State):
     Closes the air vent gradually according to a provided function.
     """
 
-    def __init__(self, function):
-        super().__init__("vent_closer")
+    def __init__(self, function, name="timed_close"):
+        super().__init__(name)
         self.machine = StateMachine()
         self.machine.add_state(Monitoring())
         self.machine.add_state(Override())

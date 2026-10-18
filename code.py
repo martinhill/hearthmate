@@ -19,6 +19,7 @@ from vent_closer import (
     logger as vent_logger,
 )
 from vent_mover import MoveVentState, logger as vm_logger
+from temperature_target import TemperatureTargetFunction, logger as tt_logger
 from logging import MQTTHandler, FileHandler
 from connections import (
     WiFiConnectionManager,
@@ -43,6 +44,15 @@ THERMAL_MAX_TEMP_CHANGE: float = float(
 MEASUREMENT_BUFFER_INTERVAL: int = int(
     os.getenv("MEASUREMENT_BUFFER_INTERVAL", 15)
 )  # seconds
+# Frames whose chess-pattern subpages differ by more than this are not used for control
+THERMAL_SUBPAGE_THRESHOLD: float = float(
+    os.getenv("THERMAL_SUBPAGE_THRESHOLD", 10.0)
+)  # degrees C
+# Former mode names still accepted in MQTT commands and AUTO_MODE
+MODE_ALIASES = {"vent_closer": "timed_close", "close": "timed_close"}
+# Mode engaged automatically when Idle sees the vent closed then opened: timed_close or temp_control
+AUTO_MODE: str = os.getenv("AUTO_MODE", "timed_close")
+AUTO_MODE = MODE_ALIASES.get(AUTO_MODE, AUTO_MODE)
 
 MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
 MQTT_KEEP_ALIVE: int = int(os.getenv("MQTT_KEEP_ALIVE", 300))
@@ -74,7 +84,7 @@ class IdleState(State):
     """
     Idle state.
     If vent movement to fully closed position is detected, and then fully open,
-    the state machine will transition to "vent_closer" state.
+    the state machine will transition to the AUTO_MODE state (timed_close or temp_control).
     """
 
     def __init__(self, sensitivity=0.001):
@@ -119,8 +129,8 @@ class IdleState(State):
             logger.info("Detected vent closed")
         elif vent_position < 0.01 and self.detected_fully_closed:
             # detected vent fully open after closed position - transition
-            logger.info("Detected vent open - engaging automatic vent closer")
-            machine.set_state("vent_closer")
+            logger.info("Detected vent open - engaging %s", AUTO_MODE)
+            machine.set_state(AUTO_MODE)
 
 
 class Calibrate(State):
@@ -188,7 +198,7 @@ def init_mqtt_client(
     return mqtt_client
 
 
-def init_state_machine(mqtt_client, hardware, vent, closer_function):
+def init_state_machine(mqtt_client, hardware, vent, closer_function, temp_function):
     # Create the state machine
     machine = StateMachine(mqtt_timeout=MQTT_TIMEOUT)
     machine.data["hardware"] = hardware
@@ -197,7 +207,8 @@ def init_state_machine(mqtt_client, hardware, vent, closer_function):
     machine.add_state(TestMotion(moves_each_direction=2, target_step_angle=30.0))
     machine.add_state(IdleState())
     machine.add_state(MoveVentState())
-    machine.add_state(VentCloser(closer_function))
+    machine.add_state(VentCloser(closer_function, name="timed_close"))
+    machine.add_state(VentCloser(temp_function, name="temp_control"))
     return machine
 
 
@@ -241,6 +252,7 @@ def setup_loggers(mqtt_client: MQTT, mqtt_handler: MQTTHandler):
         cam_logger: [mqtt_handler, file_handler],
         adafruit_mlx90640.logger: [mqtt_handler, file_handler],
         stovelink_logger: [mqtt_handler, file_handler],
+        tt_logger: [mqtt_handler, file_handler],
         sm_logger: [mqtt_handler, file_handler],
     }
     for lgr, handlers in logger_handlers_mapping.items():
@@ -253,19 +265,29 @@ def setup_loggers(mqtt_client: MQTT, mqtt_handler: MQTTHandler):
     )
 
 
-def get_combustion_time(closer_function: VentFunctionABC) -> int:
+def get_active_function(machine: StateMachine) -> VentFunctionABC:
+    """
+    Get the vent function of the current mode (timed_close or temp_control).
+    Falls back to the linear closer function when neither mode is active.
+    """
+    for name in machine.state_stack + [machine.current_state]:
+        if name in ("timed_close", "temp_control"):
+            return machine.states[name].machine.data["function"]
+    return closer_function
+
+
+def get_combustion_time(function: VentFunctionABC) -> int:
     """
     Get elapsed combustion time in seconds.
 
     Args:
-        machine: State machine instance
+        function: Vent function of the active mode
 
     Returns:
-        int: Seconds since burn cycle started (0 if not in vent_closer state)
+        int: Seconds since burn cycle started
     """
-    elapsed = closer_function.get_elapsed_time()
+    elapsed = function.get_elapsed_time()
     return int(max(0, elapsed))
-    return 0
 
 
 def do_thermal_camera_stuff(camera_exception_raised):
@@ -274,6 +296,7 @@ def do_thermal_camera_stuff(camera_exception_raised):
     Returns True if successful, False if camera recovery is needed.
     """
     global thermal_camera, ha, mqtt_client, vent, stovelink_encoder, machine, mqtt_topic
+    global temp_function
 
     if camera_exception_raised:
         recovery_start = time.monotonic()
@@ -310,6 +333,13 @@ def do_thermal_camera_stuff(camera_exception_raised):
         np_frame = thermal_camera.get_np_frame()
         stats = thermal_camera.get_temperature_statistics(np_frame)
 
+        # Feed the temperature target controller, skipping chessboard-artifact frames
+        mismatch = thermal_camera.subpage_mismatch(np_frame)
+        if mismatch < THERMAL_SUBPAGE_THRESHOLD:
+            temp_function.update_temperature(stats["max"])
+        else:
+            logger.warning("Thermal frame subpage mismatch %.1fC - not used for control", mismatch)
+
         # Encode and publish StoveLink binary packet (use numpy frame for efficiency)
         tmp36_start = time.monotonic()
         tmp36_temp = hardware.tmp36_temperature_C()
@@ -318,7 +348,7 @@ def do_thermal_camera_stuff(camera_exception_raised):
         stats_calc_time = stovelink_start - stats_start_time
         capture_time = stats_start_time - camera_start_time
         vent_position = vent.get_position()
-        combustion_time = get_combustion_time(closer_function)
+        combustion_time = get_combustion_time(get_active_function(machine))
         stovelink_packet = stovelink_encoder.encode_packet(
             np_frame, vent_position, combustion_time, tmp36_temp
         )
@@ -368,10 +398,11 @@ if __name__ == "__main__":
 
     def command_handler(message):
         global machine
+        message = MODE_ALIASES.get(message, message)
         if message == "test":
             machine.set_state("test_motion")
-        elif message == "close" or message == "vent_closer":
-            machine.set_state("vent_closer")
+        elif message in ("timed_close", "temp_control"):
+            machine.set_state(message)
         elif message == "stop" or message == "idle":
             machine.set_state("idle")
         elif message == "collect":
@@ -409,7 +440,8 @@ if __name__ == "__main__":
     hardware.led_on()
     vent = create_vent_from_env()
     closer_function = LinearVentFunction(VENT_CLOSE_TIME)
-    machine = init_state_machine(mqtt_client, hardware, vent, closer_function)
+    temp_function = TemperatureTargetFunction(time_range=VENT_CLOSE_TIME)
+    machine = init_state_machine(mqtt_client, hardware, vent, closer_function, temp_function)
 
     # Initialize thermal camera and StoveLink encoder
     thermal_camera: ThermalCamera = get_thermal_camera(hardware.i2c)
