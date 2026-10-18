@@ -263,7 +263,7 @@ class TemperatureTargetFunction(VentFunctionABC):
     def start(self, vent_current_position):
         super().start(vent_current_position)
         self._reset_control(vent_current_position)
-        self._log_event("start: reload")
+        self._log_event("start: reload (regulate %s)" % self.regulate)
 
     def adjust(self, new_position):
         """Manual override: continue from the new position. Opening (nearly) fully counts as a
