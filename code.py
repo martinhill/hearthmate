@@ -5,6 +5,8 @@ import socketpool
 import ssl
 import gc
 import supervisor
+import microcontroller
+from watchdog import WatchDogMode
 
 from adafruit_minimqtt.adafruit_minimqtt import MQTT, MMQTTException, MMQTTStateError
 import adafruit_logging as logging
@@ -59,6 +61,11 @@ AUTO_MODE = MODE_ALIASES.get(AUTO_MODE, AUTO_MODE)
 # Reload when files are written over the web workflow. Off, so a deploy during a burn reloads
 # once, on the reload command, after all files are uploaded (scripts/deploy.sh).
 AUTORELOAD: bool = os.getenv("AUTORELOAD", "off").lower() in ("on", "true", "1")
+
+# Reset the board if the main loop stops for this long (s); 0 disables. The board has frozen
+# for good inside a network call, still answering ping; the 60-80 s stalls recover by themselves.
+# The burn resumes after a watchdog reset if the device clock survived it (burn_state.py).
+WATCHDOG_TIMEOUT: float = float(os.getenv("WATCHDOG_TIMEOUT", 120))
 
 MQTT_TIMEOUT: float = float(os.getenv("MQTT_TIMEOUT", "0.1"))
 MQTT_KEEP_ALIVE: int = int(os.getenv("MQTT_KEEP_ALIVE", 300))
@@ -458,6 +465,11 @@ if __name__ == "__main__":
             machine.set_state("idle")
         elif message == "reload":
             reload_device()
+        elif message == "test_watchdog":
+            # Stop feeding the watchdog, as a hung main loop would
+            logger.warning("Testing the watchdog: main loop stopped, reset in %ds", WATCHDOG_TIMEOUT)
+            while True:
+                time.sleep(1)
         elif message == "collect":
             logger.info("Free memory before GC: %d bytes", gc.mem_free())
             gc.collect()
@@ -576,7 +588,13 @@ if __name__ == "__main__":
         # Off until the finally below. The flag survives soft reloads (CircuitPython only sets it
         # at a hard start), so every way out of here turns it back on.
         supervisor.runtime.autoreload = AUTORELOAD
+        if WATCHDOG_TIMEOUT > 0:
+            microcontroller.watchdog.timeout = WATCHDOG_TIMEOUT
+            microcontroller.watchdog.mode = WatchDogMode.RESET
+            logger.info("Watchdog: reset after %ds without a main loop iteration", WATCHDOG_TIMEOUT)
         while True:
+            if WATCHDOG_TIMEOUT > 0:
+                microcontroller.watchdog.feed()
             current_time = time.monotonic()
 
             # Priority 1: Ensure WiFi is connected
@@ -706,6 +724,12 @@ if __name__ == "__main__":
         # Leaving the main loop (Ctrl-C, a reload, an error): let file writes reload the device
         # again, so a fix can still be deployed, and save the state for the next run
         supervisor.runtime.autoreload = True
+        if WATCHDOG_TIMEOUT > 0:
+            # Not at the REPL; a soft reload clears it anyway
+            try:
+                microcontroller.watchdog.deinit()
+            except Exception:
+                pass
         try:
             burn_store.save(machine, stovelink_encoder.sequence_id)
         except Exception:

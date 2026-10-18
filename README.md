@@ -60,6 +60,16 @@ the device clock shows the state is under 5 minutes old (the clock restarts at 2
 a hard reset), and the vent is where it was saved. Otherwise, e.g. after a power cut, it starts
 in idle as before. See `burn_state.py`; `simulation/restart.py` tests it.
 
+A hardware watchdog resets the board if the main loop stops for `WATCHDOG_TIMEOUT` seconds
+(120 by default): the board has frozen for good inside a network call while still answering
+ping. The burn resumes after a watchdog reset too, if the device clock survived it; otherwise
+it starts in idle. To test it on a cold stove, send the `test_watchdog` command, which stops the
+main loop:
+
+```bash
+mosquitto_pub -h homeassistant -t burnie/command -m test_watchdog
+```
+
 Autoreload is off while the firmware runs (`AUTORELOAD`), so a deploy reloads once with all
 files in place. It is turned back on whenever the main loop exits, so a fixed upload still
 reloads code that crashed.
@@ -67,7 +77,7 @@ reloads code that crashed.
 `settings.toml` on the device holds WiFi, MQTT and web workflow credentials and isn't in the
 repo. Firmware settings are read with `os.getenv` there, e.g. `AUTO_MODE`, `VENT_CLOSE_TIME`,
 the `TT_*` temperature control settings, `WIFI_POWER_MANAGEMENT` (`none` by default, `min`
-is the CircuitPython default) and `AUTORELOAD` (`off` by default).
+is the CircuitPython default), `AUTORELOAD` (`off` by default) and `WATCHDOG_TIMEOUT`.
 
 ## TODO
 

@@ -1,11 +1,12 @@
 """Resume a burn after a soft reboot (a deploy, the reload command or Ctrl-D) from controller state
-saved in a retained MQTT message. After a hard reset the device starts in idle as before.
+saved in a retained MQTT message, and after a watchdog reset of a hung main loop. After any
+other hard reset the device starts in idle as before.
 
 The saved state includes the device clock (time.time()). It keeps running through a soft reboot
 and restarts at 2000-01-01 after a hard reset, so the difference to the saved clock is the time
 the device was down. Together with supervisor.runtime.run_reason (STARTUP on a hard reset) it
 decides whether to resume:
-  - the run reason is a reload, not STARTUP,
+  - the run reason is a reload, or the reset was the watchdog's (not a power-up or brownout),
   - the saved state is between 0 and max_age seconds old by the device clock, and
   - the vent is where it was saved (nobody moved it by hand meanwhile).
 Otherwise the device starts in idle and the retained message is cleared, so a stale state can't
@@ -17,8 +18,10 @@ import time
 
 try:
     import supervisor
+    import microcontroller
 except ImportError:
     supervisor = None
+    microcontroller = None
 
 try:
     import adafruit_logging as logging
@@ -29,15 +32,28 @@ logger = logging.getLogger(__name__)
 
 SAVE_VERSION = 1
 MODES = ("timed_close", "temp_control")
-SOFT_RELOADS = ("AUTO_RELOAD", "SUPERVISOR_RELOAD", "REPL_RELOAD")
+# Starts that may resume: soft reboots, and a watchdog reset of a hung main loop (see code.py)
+RESUMABLE = ("AUTO_RELOAD", "SUPERVISOR_RELOAD", "REPL_RELOAD", "WATCHDOG")
+
+
+def reset_reason():
+    "Why the microcontroller last reset, e.g. POWER_ON, WATCHDOG, BROWNOUT, RESET_PIN"
+    if microcontroller is None:
+        return "POWER_ON"
+    # e.g. "microcontroller.ResetReason.WATCHDOG"
+    return str(microcontroller.cpu.reset_reason).split(".")[-1]
 
 
 def run_reason():
-    "Why CircuitPython started this run: STARTUP, AUTO_RELOAD, SUPERVISOR_RELOAD or REPL_RELOAD"
+    """Why CircuitPython started this run: AUTO_RELOAD, SUPERVISOR_RELOAD or REPL_RELOAD for a
+    soft reboot; WATCHDOG for a hard start after a watchdog reset; otherwise STARTUP"""
     if supervisor is None:
         return "STARTUP"
     # e.g. "supervisor.RunReason.AUTO_RELOAD"
-    return str(supervisor.runtime.run_reason).split(".")[-1]
+    reason = str(supervisor.runtime.run_reason).split(".")[-1]
+    if reason == "STARTUP" and reset_reason() == "WATCHDOG":
+        return "WATCHDOG"
+    return reason
 
 
 def active_mode(machine):
@@ -186,8 +202,8 @@ class BurnStateStore:
             return False, "no saved state"
         if saved.get("v") != SAVE_VERSION:
             return False, "saved state has version %s, expected %d" % (saved.get("v"), SAVE_VERSION)
-        if reason not in SOFT_RELOADS:
-            return False, "hard reset (%s)" % reason
+        if reason not in RESUMABLE:
+            return False, "hard reset (%s, %s)" % (reason, reset_reason())
         downtime = self.clock() - saved["clock"]
         if downtime < 0:
             return False, "device clock is behind the saved state (hard reset)"

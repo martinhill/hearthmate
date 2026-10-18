@@ -236,10 +236,12 @@ def main():
     plant = importlib.import_module("plant_v3")
     fit = json.load(open("fit_all_v3.json"))
     g, burn = fit["global"], fit["burns"][40]
-    for reason, expect in (("STARTUP", "hard reset"),):
+    for reason, expect in (("STARTUP", "hard reset"), ("WATCHDOG", "after")):
         got = run(burn, g, plant, "temp_control", restart_at=1800, reason=reason, hours=1)
         checks += 1
-        ok = not got[3][0] and expect in got[3][1] and got[0][-1][2] == "idle"
+        resumes = reason == "WATCHDOG"
+        ok = got[3][0] == resumes and expect in got[3][1] and (
+            got[0][-1][2] == ("temp_control" if resumes else "idle"))
         failures += not ok
         print(f"{'ok  ' if ok else 'FAIL'} {reason}: {got[3][1]} -> {got[0][-1][2]}")
 
@@ -251,14 +253,18 @@ def main():
     dev.store.save(dev.machine, 1)
     saved = json.loads(broker.retained[Device.TOPIC])
     cases = [
-        ("too old", 5000 + 301, 0.0, False, "old"),
-        ("clock behind", 20, 0.0, False, "hard reset"),
-        ("vent moved", 5010, 0.3, False, "vent moved"),
-        ("fresh", 5010, 0.02, True, "temp_control after 10s"),
+        ("too old", 5000 + 301, 0.0, "SUPERVISOR_RELOAD", False, "old"),
+        ("clock behind", 20, 0.0, "SUPERVISOR_RELOAD", False, "hard reset"),
+        ("vent moved", 5010, 0.3, "SUPERVISOR_RELOAD", False, "vent moved"),
+        ("fresh", 5010, 0.02, "SUPERVISOR_RELOAD", True, "temp_control after 10s"),
+        # A watchdog reset of a hung main loop: resume if the clock survived it
+        ("watchdog, clock kept", 5000 + 150, 0.0, "WATCHDOG", True, "after 150s (WATCHDOG)"),
+        ("watchdog, clock reset", 12, 0.0, "WATCHDOG", False, "hard reset"),
+        ("power on", 5010, 0.0, "STARTUP", False, "hard reset (STARTUP"),
     ]
-    for name, now, vent, expect_ok, expect in cases:
+    for name, now, vent, reason, expect_ok, expect in cases:
         clock.t = now
-        ok, why = dev.store.check(saved, "SUPERVISOR_RELOAD", vent)
+        ok, why = dev.store.check(saved, reason, vent)
         good = ok == expect_ok and expect in why
         checks += 1
         failures += not good

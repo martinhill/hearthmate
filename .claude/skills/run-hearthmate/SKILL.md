@@ -97,7 +97,7 @@ uv run --project marimo python .claude/skills/run-hearthmate/driver.py check
 ```
 
 Expect `firmware syntax: 14/14 files ok`, both service suites passing (8/8, 4/4) and
-`restart: 123/123 restart checks passed` (soft reboots in every controller phase; ~45 s).
+`restart: 127/127 restart checks passed` (soft reboots in every controller phase; ~45 s).
 Simulation regression across both stove models, parameter variants and sensor noise (~30 s):
 
 ```bash
