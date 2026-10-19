@@ -5,7 +5,12 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device
-- Device upload: Copy .py files to device's `/lib` or root via REPL or file transfer
+- Desktop environment: `uv sync` (root `pyproject.toml`): Blinka and the CircuitPython libraries for
+  editor completion, circup and python-dotenv. Simulation/notebooks use `marimo/`, the service `service/`
+- Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs `requirements.txt`
+  with circup). It reloads the device once; a burn resumes after the reload (`burn_state.py`).
+- Controller state that must survive a soft reboot goes in `save_state()`/`restore_state()` of the
+  vent functions; `simulation/restart.py` checks restarts in every phase.
 
 ## Code Style Guidelines
 

@@ -57,6 +57,32 @@ class VentFunctionABC():
         self.time_adjustment = self.inverse(new_position) - self.time_func() + self.start_time
         logger.info("Function adjust: time_adjustment=%d", self.time_adjustment)
 
+    def save_state(self):
+        """State needed to resume after a soft reboot, as a JSON-able dict. Times are saved as
+        ages in seconds, as the clock behind time_func may restart with the program."""
+        return {
+            "time_range": self.time_range,
+            "age": self._age(self.start_time),
+            "start_position": getattr(self, "start_position", None),
+            "time_adjustment": self.time_adjustment,
+        }
+
+    def restore_state(self, state, downtime):
+        """Resume from save_state() output. downtime: seconds between the save and now."""
+        self._restore_now = self.time_func() - downtime
+        self.time_range = state["time_range"]
+        self.start_time = self._time(state["age"])
+        self.start_position = state["start_position"]
+        self.time_adjustment = state["time_adjustment"]
+
+    def _age(self, timestamp):
+        "Seconds before now of a time_func() timestamp, for save_state()"
+        return None if timestamp is None else round(self.time_func() - timestamp, 2)
+
+    def _time(self, age):
+        "time_func() timestamp of an age saved by save_state(), during restore_state()"
+        return None if age is None else self._restore_now - age
+
 
 class LinearVentFunction(VentFunctionABC):
     """Just a simple straight line.
@@ -210,9 +236,13 @@ class Closed(State):
     then waits until the air vent is moved to full open and resets function.
     """
 
-    def __init__(self, open_position_threshold = 0.1, extra_steps = 2, sensitivity = 0.001):
+    def __init__(
+        self, open_position_threshold = 0.1, extra_steps = 2, sensitivity = 0.001,
+        reopen_threshold = 0.98,
+    ):
         super().__init__("closed")
         self.open_position_threshold = open_position_threshold
+        self.reopen_threshold = reopen_threshold
         self.extra_steps = extra_steps
         self.sensitivity = sensitivity
 
@@ -248,6 +278,13 @@ class Closed(State):
             func = machine.data["function"]
             func.start(vent_position)
             machine.set_state("monitoring")
+        elif machine.current_state == "closed":
+            # The function may ask for the vent to open again, e.g. a temp_control back-off when
+            # the fire sags after closing. The Closing state moves in either direction.
+            ideal_position = machine.data["function"].get_position()
+            if ideal_position < self.reopen_threshold:
+                logger.info("Closed: function requests position %.3f", ideal_position)
+                machine.set_state("closing")
 
     def handle_move_request(self, machine, target_position):
         "Always allow manual move requests while closed"
@@ -263,8 +300,8 @@ class VentCloser(State):
     Closes the air vent gradually according to a provided function.
     """
 
-    def __init__(self, function):
-        super().__init__("vent_closer")
+    def __init__(self, function, name="timed_close"):
+        super().__init__(name)
         self.machine = StateMachine()
         self.machine.add_state(Monitoring())
         self.machine.add_state(Override())
@@ -307,6 +344,15 @@ class VentCloser(State):
         function.adjust(vent.get_position())
         self.machine.states[self.machine.current_state].resume(self.machine)
         logger.info("%s resumed", self.name)
+
+    def restore(self, machine, vent_closed):
+        """Re-enter after a soft reboot with the function already restored (no start()).
+        Monitoring takes it from there: closing, or straight to closed if the function says so."""
+        for key in "vent", "hardware", "mqtt_client":
+            self.machine.data[key] = machine.data[key]
+        self.machine.data["vent_closed"] = vent_closed
+        self.machine.set_state("monitoring")
+        logger.info("%s resumed after reload", self.name)
 
     def exit(self, machine):
         logger.info("exit %s", self.name)

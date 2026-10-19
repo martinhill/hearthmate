@@ -8,19 +8,25 @@ app = marimo.App(width="medium")
 def _():
     import marimo as mo
     import h5py
+    import os
     import altair as alt
     import polars as pl
     from pathlib import Path
     import numpy as np
     import matplotlib.pyplot as plt
+    from dotenv import load_dotenv
 
-    return Path, alt, h5py, mo, np, pl, plt
+    # Settings from the repo's .env (template: .env.example); the environment takes precedence
+    load_dotenv(mo.notebook_dir().parent / ".env")
+    return Path, alt, h5py, mo, np, os, pl, plt
 
 
 @app.cell(hide_code=True)
-def file_selection(Path, mo):
+def file_selection(Path, mo, os):
     file_browser = mo.ui.file_browser(
-        initial_path=Path("/Volumes/burnie/"), multiple=False, filetypes=[".h5"]
+        initial_path=Path(os.environ.get("BURNIE_DATA", "/Volumes/Burnie")),
+        multiple=False,
+        filetypes=[".h5"],
     )
     mo.vstack([file_browser])
     return (file_browser,)

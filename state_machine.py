@@ -79,6 +79,12 @@ class StateMachine:
         self.previous_state = self.current_state
         self.current_state = state_name
 
+    def restore_state(self, state_name, *args):
+        """Switch to a state that resumes rather than starts, via its restore(machine, *args),
+        e.g. after a soft reboot"""
+        self._transition(state_name)
+        self.states[self.current_state].restore(self, *args)
+
     def push_state(self, state_name):
         """Push the current state to the stack and switch to a new state"""
         if self.current_state:
@@ -131,8 +137,9 @@ class StateMachine:
             # Track gaps between mqtt_loop calls
             if self._last_loop_time is not None:
                 gap = loop_start - self._last_loop_time
-                # Warn if gap exceeds 60 seconds (keep-alive is 300s, so this gives buffer)
-                if gap > 60.0:
+                # Warn on gaps of 30 s and more; the keep-alive is 300 s, but recurring ~60 s
+                # stalls need to show up in the INFO-level logs
+                if gap > 30.0:
                     logger.warning(
                         "MQTT loop gap: %.1fs in state '%s' (sub-state: %s)",
                         gap,
@@ -159,11 +166,10 @@ class StateMachine:
                 raise
 
     def _get_substate_name(self):
-        """Helper to get substate name for vent_closer composite state"""
-        if self.current_state == "vent_closer" and "vent_closer" in self.states:
-            vc_state = self.states["vent_closer"]
-            if hasattr(vc_state, "machine"):
-                return vc_state.machine.current_state
+        """Helper to get substate name for composite states (timed_close, temp_control)"""
+        state = self.states.get(self.current_state)
+        if hasattr(state, "machine"):
+            return state.machine.current_state
         return "N/A"
 
     def get_state(self):

@@ -1,6 +1,7 @@
 import time
 import board
 import binascii
+import digitalio
 from ulab import numpy as np
 import adafruit_logging as logging
 
@@ -131,6 +132,31 @@ class ThermalCamera:
         else:
             self.mlx.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_64_HZ
 
+    def power_cycle(self, off_time=0.5, boot_time=1.0):
+        """
+        Cut and restore power to the STEMMA QT port, which resets a hung camera the way a soft
+        reboot does. On the Feather ESP32 V2 the port (and the onboard NeoPixel) is powered
+        through NEOPIXEL_I2C_POWER; the encoder and motor FeatherWing are not, and the camera
+        must be the only device on the port. No other I2C traffic happens meanwhile, as the main
+        loop is single threaded; keep off_time short since the unpowered camera stays on the bus.
+
+        Returns:
+            bool: True if the port was power cycled, False if the power pin is unavailable
+        """
+        try:
+            if getattr(self, "_power", None) is None:
+                self._power = digitalio.DigitalInOut(board.NEOPIXEL_I2C_POWER)
+            self._power.switch_to_output(value=False)
+            time.sleep(off_time)
+            self._power.value = True
+            time.sleep(boot_time)
+            logger.info("STEMMA QT port power cycled")
+            return True
+        except (AttributeError, ValueError, RuntimeError) as e:
+            # No such pin on this board, or it is claimed elsewhere
+            logger.warning("Cannot power cycle STEMMA QT port: %s", e)
+            return False
+
     def reinitialize(self):
         """
         Reinitialize the camera connection after I2C communication failure.
@@ -248,6 +274,27 @@ class ThermalCamera:
             "mean": np.mean(npframe),
             "median": np.median(npframe),
         }
+
+    def subpage_mismatch(self, frame: np.ndarray[float] = None) -> float:
+        """Difference in degC between the mean of the two chess-pattern subpages.
+
+        The MLX90640 reads a frame as two interleaved subpages in a chessboard pattern. A large
+        difference between them means the subpages came from different moments (e.g. a
+        transient read error) and the frame shows a checkerboard artifact.
+        Uses per-row slices of the flat 24x32 array to avoid allocating a reshaped copy.
+        """
+        if frame is None:
+            frame = self.get_np_frame()
+        width = self.width
+        sum_a = 0.0
+        sum_b = 0.0
+        for row in range(self.height):
+            start = row * width
+            offset = row % 2
+            sum_a += np.sum(frame[start + offset : start + width : 2])
+            sum_b += np.sum(frame[start + 1 - offset : start + width : 2])
+        half = self.width * self.height / 2
+        return abs(sum_a - sum_b) / half
 
     def frame_to_rgb(self, frame=None, colormap="ironbow"):
         """
@@ -388,6 +435,9 @@ class MockThermalCamera(ThermalCamera):
         self._np_frame = np.zeros(768, dtype=np.float)
 
         logger.info("MockThermalCamera initialized (simulated)")
+
+    def power_cycle(self, off_time=0.5, boot_time=1.0):
+        return False
 
     def capture_frame(self):
         """

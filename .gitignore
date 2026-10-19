@@ -10,3 +10,8 @@ __pycache__/
 /reference/
 
 *.h5
+simulation/*.png
+
+# Local settings for desktop scripts; .env.example is the tracked template
+.env
+.envrc

@@ -176,6 +176,18 @@ class HomeAssistant:
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
                 },
+                "reload": {
+                    "name": "Reload",
+                    "p": "button",
+                    "unique_id": f"{self.device_name}_reload",
+                    "command_topic": f"{self.topic_prefix}/command",
+                    "payload_press": "reload",
+                    "ent_cat": "config",
+                    "icon": "mdi:restart",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
                 "operating_state": {
                     "name": "State Machine",
                     "p": "select",
@@ -184,7 +196,8 @@ class HomeAssistant:
                     "state_topic": f"{self.topic_prefix}/state",
                     "options": [
                         "idle",
-                        "vent_closer",
+                        "timed_close",
+                        "temp_control",
                     ],
                     "avty": [
                         {"topic": f"{self.topic_prefix}/status"},
@@ -200,6 +213,54 @@ class HomeAssistant:
                     "unit_of_meas": "minutes",
                     "min": 5,
                     "max": 60,
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "target_temperature": {
+                    "name": "Target Temperature",
+                    "p": "number",
+                    "unique_id": f"{self.device_name}_target_temperature",
+                    "command_topic": f"{self.topic_prefix}/temp_control/target/set",
+                    "state_topic": f"{self.topic_prefix}/temp_control/target/state",
+                    "device_class": "temperature",
+                    "unit_of_meas": "°C",
+                    "min": 150,
+                    "max": 400,
+                    "step": 5,
+                    "mode": "box",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "controller_phase": {
+                    "name": "Controller Phase",
+                    "p": "sensor",
+                    "unique_id": f"{self.device_name}_controller_phase",
+                    "state_topic": f"{self.topic_prefix}/temp_control/phase/state",
+                    "ent_cat": "diagnostic",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "fire_stalled": {
+                    "name": "Fire Stalled",
+                    "p": "binary_sensor",
+                    "device_class": "problem",
+                    "unique_id": f"{self.device_name}_fire_stalled",
+                    "state_topic": f"{self.topic_prefix}/temp_control/fire_stalled/state",
+                    "avty": [
+                        {"topic": f"{self.topic_prefix}/status"},
+                    ],
+                },
+                "predicted_temperature": {
+                    "name": "Predicted Max Temperature",
+                    "p": "sensor",
+                    "device_class": "temperature",
+                    "unit_of_meas": "°C",
+                    "unique_id": f"{self.device_name}_predicted_temperature",
+                    "state_topic": f"{self.topic_prefix}/temp_control/predicted/state",
+                    "ent_cat": "diagnostic",
                     "avty": [
                         {"topic": f"{self.topic_prefix}/status"},
                     ],
@@ -425,12 +486,31 @@ class HomeAssistant:
             logger.error("set_air_vent: %s", ve)
 
     def set_duration(self, message):
+        """Closing duration of the linear closer. Also sets the closing rate of temp_control's
+        stalled and coals phases."""
         try:
-            function = self.machine.states["vent_closer"].machine.data["function"]
-            function.time_range = int(message) * 60
-            logger.info("Set closing duration to %d seconds", function.time_range)
+            for name in ("timed_close", "temp_control"):
+                state = self.machine.states.get(name)
+                if state:
+                    state.machine.data["function"].time_range = int(message) * 60
+            logger.info("Set closing duration to %d seconds", int(message) * 60)
         except Exception as e:
             logger.error("set_duration: %s", e)
+
+    def get_temp_function(self):
+        "The temperature target controller, or None if the temp_control mode is not configured"
+        temp_control = self.machine.states.get("temp_control")
+        if temp_control:
+            return temp_control.machine.data.get("function")
+        return None
+
+    def set_target_temperature(self, message):
+        try:
+            function = self.get_temp_function()
+            function.target = max(150.0, min(float(message), 400.0))
+            logger.info("Set target temperature to %.0fC", function.target)
+        except Exception as e:
+            logger.error("set_target_temperature: %s", e)
 
     def set_step_param(
         self, param_name: str, min_value: float, max_value: float, message: str
@@ -459,6 +539,7 @@ class HomeAssistant:
         return {
             f"{self.topic_prefix}/air_vent/set": self.set_air_vent,
             f"{self.topic_prefix}/duration/set": self.set_duration,
+            f"{self.topic_prefix}/temp_control/target/set": self.set_target_temperature,
             f"{self.topic_prefix}/step_params/initial_delay/set": (
                 lambda msg: self.set_step_param("initial_delay", 0.01, 0.25, msg)
             ),
@@ -591,12 +672,25 @@ class HomeAssistant:
             self.update_mqtt_state("tmp36/state", tmp36_avg)
 
         # kludge alert
-        vent_closer = self.machine.states.get("vent_closer")
-        if vent_closer:
-            function = vent_closer.machine.data.get("function")
+        timed_close = self.machine.states.get("timed_close")
+        if timed_close:
+            function = timed_close.machine.data.get("function")
             if function:
                 duration = int(function.time_range / 60)
                 self.update_mqtt_state("duration/state", duration)
+
+        temp_function = self.get_temp_function()
+        if temp_function:
+            status = temp_function.get_status()
+            self.update_mqtt_state("temp_control/target/state", f"{status['target']:.0f}")
+            self.update_mqtt_state("temp_control/phase/state", status["phase"])
+            self.update_mqtt_state(
+                "temp_control/fire_stalled/state", "ON" if status["fire_stalled"] else "OFF"
+            )
+            if status["predicted"] is not None:
+                self.update_mqtt_state(
+                    "temp_control/predicted/state", f"{status['predicted']:.1f}"
+                )
 
         # Publish step_params state to Home Assistant
         for param_name in [

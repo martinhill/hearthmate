@@ -12,6 +12,13 @@ HDF5 files are automatically rotated when a combustion time reset is detected (i
 a new firing cycle). Completed files are organized in YYYYMM/DD subdirectories with
 filenames in the format YYYYMMDD-NN.h5 where NN is the cycle number.
 
+With --log-topic, the device's MQTT log lines are written to a text sidecar next to the HDF5
+file (current_cycle.log, rotated to YYYYMMDD-NN.log with it). Each line is tab separated:
+    <received wall time>  <sequence_id>  <combustion_time>  <device log line>
+sequence_id and combustion_time are those of the first StoveLink packet received after the log
+line, i.e. the line was logged just before that frame. "-" means no packet followed within
+the hold time (e.g. camera or device offline).
+
 Usage:
     python3 stovelink_service.py --mqtt-host localhost --input-topic stovelink/data --dynamic-topic homeassistant/camera/thermal/dynamic --static-topic homeassistant/camera/thermal/static --hdf5-dir /data/thermal
 
@@ -25,8 +32,11 @@ import argparse
 import base64
 import json
 import logging
+import os
+import re
 import shutil
 import struct
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -267,7 +277,22 @@ class HDF5Storage:
         self.initial_filename = initial_filename
         self.current_filename = str(self.base_dir / initial_filename)
         self.file: Optional[h5py.File] = None
+        self.log_file = None  # Device log text sidecar, opened on first write
         self.last_combustion_time: Optional[int] = None
+
+    @property
+    def log_filename(self) -> str:
+        """Device log sidecar next to the current HDF5 file, e.g. current_cycle.log"""
+        return str(Path(self.current_filename).with_suffix(".log"))
+
+    def append_log(self, lines: list):
+        """Append device log lines to the sidecar of the current cycle."""
+        if self.log_file is None:
+            self.log_file = open(self.log_filename, "a", encoding="utf-8")
+        for line in lines:
+            self.log_file.write(line + "\n")
+        self.log_file.flush()
+        os.fsync(self.log_file.fileno())
 
     def open(self, filename: Optional[str] = None):
         """Open HDF5 file for writing."""
@@ -333,14 +358,19 @@ class HDF5Storage:
         self.file["tmp36_temps"][current_size] = decoded_packet["tmp36_temperature"]
         self.file["combustion_times"][current_size] = decoded_packet["combustion_time"]
 
-        # Flush to disk
+        # Flush to disk. fsync too: on a network share (CIFS) written data otherwise stays in the
+        # client cache until the file is closed at rotation, and a crash would lose the cycle.
         self.file.flush()
+        os.fsync(self.file.id.get_vfd_handle())
 
     def close(self):
-        """Close HDF5 file."""
+        """Close HDF5 file and log sidecar."""
         if self.file is not None:
             self.file.close()
             self.file = None
+        if self.log_file is not None:
+            self.log_file.close()
+            self.log_file = None
 
     def _get_next_cycle_number(self, date_dir: Path) -> int:
         """
@@ -401,11 +431,14 @@ class HDF5Storage:
         date_str = now.strftime("%Y%m%d")
         new_filename = day_dir / f"{date_str}-{cycle_num:02d}.h5"
 
-        # Move current file to archive location
+        # Move current file and its log sidecar to archive location
         current_path = Path(self.current_filename)
         if current_path.exists():
             shutil.move(str(current_path), str(new_filename))
             logger.info(f"Rotated file: {current_path} -> {new_filename}")
+        log_path = Path(self.log_filename)
+        if log_path.exists():
+            shutil.move(str(log_path), str(new_filename.with_suffix(".log")))
 
         # Open new file with temporary name in base directory
         temp_filename = self.base_dir / self.initial_filename
@@ -436,6 +469,10 @@ class HDF5Storage:
         return False
 
 
+# Device log lines that only repeat what each HDF5 frame already records
+DEFAULT_LOG_EXCLUDE = r"stovelink: StoveLink packet:"
+
+
 class StoveLinkService:
     """
     MQTT service for processing StoveLink thermal camera data.
@@ -454,6 +491,9 @@ class StoveLinkService:
         username: Optional[str] = None,
         password: Optional[str] = None,
         diagnostic_topic: Optional[str] = None,
+        log_topic: Optional[str] = None,
+        log_exclude: Optional[str] = DEFAULT_LOG_EXCLUDE,
+        log_hold_seconds: float = 30.0,
     ):
         self.mqtt_host = mqtt_host
         self.mqtt_port = mqtt_port
@@ -461,6 +501,11 @@ class StoveLinkService:
         self.dynamic_topic = dynamic_topic
         self.static_topic = static_topic
         self.diagnostic_topic = diagnostic_topic
+        self.log_topic = log_topic
+        self.log_exclude = re.compile(log_exclude) if log_exclude else None
+        self.log_hold_seconds = log_hold_seconds
+        # Device log lines waiting for the next packet: (monotonic time, wall time, text)
+        self.pending_log = []
         self.username = username
         self.password = password
 
@@ -511,6 +556,7 @@ class StoveLinkService:
         except KeyboardInterrupt:
             logger.info("Shutting down service")
         finally:
+            self._flush_log()
             self.storage.close()
             self.mqtt_client.disconnect()
 
@@ -520,6 +566,9 @@ class StoveLinkService:
             logger.info(f"Connected to MQTT broker at {self.mqtt_host}:{self.mqtt_port}")
             client.subscribe(self.input_topic)
             logger.info(f"Subscribed to topic: {self.input_topic}")
+            if self.log_topic:
+                client.subscribe(self.log_topic)
+                logger.info(f"Subscribed to log topic: {self.log_topic}")
         else:
             logger.error(f"Failed to connect to MQTT broker: {reason_code}")
 
@@ -529,6 +578,9 @@ class StoveLinkService:
 
     def _on_message(self, client, userdata, message, properties=None):
         """MQTT message callback."""
+        if self.log_topic and message.topic == self.log_topic:
+            self._on_log_message(message.payload)
+            return
         try:
             # Decode packet
             decoded = self.decoder.decode_packet(message.payload)
@@ -539,8 +591,9 @@ class StoveLinkService:
             # Check for file rotation (combustion time reset)
             self.storage.check_rotation(decoded["combustion_time"])
 
-            # Store in HDF5
+            # Store in HDF5, then file the log lines that preceded this frame with its cycle
             self.storage.store_packet(decoded)
+            self._flush_log(decoded)
 
             # Generate and publish dynamic range image
             dynamic_base64_image = self.dynamic_image_generator.get_base64_image(
@@ -565,6 +618,40 @@ class StoveLinkService:
 
         except Exception as e:
             logger.error(f"Error processing message: {e}")
+
+
+    def _on_log_message(self, payload: bytes):
+        """Hold a device log line until the next packet (or the hold time) decides its file."""
+        try:
+            text = payload.decode("utf-8", errors="replace").rstrip()
+            if self.log_exclude and self.log_exclude.search(text):
+                return
+            received = datetime.now().astimezone().isoformat(timespec="seconds")
+            self.pending_log.append((time.monotonic(), received, text))
+            # No packet for a while (camera or device offline): don't hold lines forever
+            if time.monotonic() - self.pending_log[0][0] > self.log_hold_seconds:
+                self._flush_log()
+        except Exception as e:
+            logger.error(f"Error processing log message: {e}")
+
+    def _flush_log(self, decoded: Optional[dict] = None):
+        """Write pending device log lines, stamped with the packet that followed them."""
+        if not self.pending_log:
+            return
+        if decoded is None:
+            seq, comb = "-", "-"
+        else:
+            seq, comb = decoded["sequence_id"], decoded["combustion_time"]
+        # Continuation lines (e.g. stack traces) are indented to stay under the text column
+        lines = [
+            f"{received}\t{seq}\t{comb}\t" + text.replace("\n", "\n\t\t\t")
+            for _, received, text in self.pending_log
+        ]
+        self.pending_log = []
+        try:
+            self.storage.append_log(lines)
+        except Exception as e:
+            logger.error(f"Error writing device log: {e}")
 
 
 def main():
@@ -611,6 +698,19 @@ def main():
         help="MQTT topic to pubish diagnostic info",
     )
 
+    parser.add_argument(
+        "--log-topic",
+        default=None,
+        help="MQTT topic of the device log (e.g. burnie/log); lines are written to a .log "
+        "file next to each HDF5 file",
+    )
+    parser.add_argument(
+        "--log-exclude",
+        default=DEFAULT_LOG_EXCLUDE,
+        help="Regular expression of device log lines not to write (default: the per-packet "
+        "StoveLink echo, which the HDF5 file already holds); empty string keeps all lines",
+    )
+
     args = parser.parse_args()
 
     service = StoveLinkService(
@@ -622,6 +722,8 @@ def main():
         static_min_temp=args.static_min_temp,
         static_max_temp=args.static_max_temp,
         diagnostic_topic=args.diagnostic_topic,
+        log_topic=args.log_topic,
+        log_exclude=args.log_exclude,
         hdf5_dir=args.hdf5_dir,
         username=args.username,
         password=args.password,

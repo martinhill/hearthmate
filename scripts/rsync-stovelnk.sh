@@ -1,1 +1,1 @@
-rsync -av --progress stovelink:/mnt/burnie reference
+rsync -av --progress --exclude=.ssh stovelink:/mnt/burnie reference

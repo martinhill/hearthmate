@@ -61,9 +61,16 @@ class Vent:
         This method should be called frequently enough to track the position, as jumps in position greater
         than 1/4 revolution can result in missed revolution (zero-crossing) detection.
         """
-        # Initialize last_angle on first call
+        # Initialize last_angle on first call, choosing the revolution that puts the position in
+        # range: at boot (e.g. after a soft reboot mid-burn) a vent past the zero crossing would
+        # otherwise read far below 0.0 until the next update
         if self.last_angle is None:
             self.last_angle = current_angle
+            while (
+                self.current_revolution < self.num_zero_crossings
+                and self.get_position(current_angle) < -0.05
+            ):
+                self.current_revolution += 1
             return
             
         # Check if the encoder raw angle position has crossed 0
