@@ -9,7 +9,12 @@ to Home Assistant MQTT camera topics.
 This relieves the MCU from image generation processing.
 
 HDF5 files are automatically rotated when a combustion time reset is detected (indicating
-a new firing cycle). Completed files are organized in YYYYMM/DD subdirectories with
+a new firing cycle), when the burn timer starts counting again after the device sat idle,
+or when the burn is over: after MAX_BURN_SECONDS of combustion time, or once a burn older
+than TEMP_CHECK_AFTER_SECONDS no longer shows fire in the frame. Between burns and while
+the device idles the current file is archived or left alone and nothing is written until
+the next firing cycle starts.
+Completed files are organized in YYYYMM/DD subdirectories with
 filenames in the format YYYYMMDD-NN.h5 where NN is the cycle number.
 
 With --log-topic, the device's MQTT log lines are written to a text sidecar next to the HDF5
@@ -272,6 +277,16 @@ class HDF5Storage:
     a few milliseconds every 10 s, so other programs can read the current cycle during a burn
     (a file held open on the CIFS share can't even be copied). A write that fails, e.g. while a
     reader has the file open, is kept and retried with the next one.
+
+    A cycle starts when the device restarts its combustion timer (new firing cycle after a
+    reload) or when the timer starts counting again after the device sat idle (e.g. after a
+    reboot between burns, where the timer sits at zero and no reset is detectable). A cycle
+    ends when the burn is over: after MAX_BURN_SECONDS of combustion time, or once a burn
+    older than TEMP_CHECK_AFTER_SECONDS no longer shows fire (no pixel above TEMP_THRESHOLD).
+    At the end the current file is archived and nothing is written until the next cycle
+    starts, so idle days between burns don't pile cold frames into the current file. While
+    the device idles (timer at zero across consecutive packets) frames are paused the same
+    way; only the live images keep being published.
     """
 
     # HDF5 dataset name -> decoded packet key
@@ -285,6 +300,14 @@ class HDF5Storage:
     }
     # Packets kept while the file can't be written: an hour at one frame per 10 s
     MAX_PENDING = 360
+    # No burn lasts longer than this before reducing to ash: past it the cycle is over even
+    # if the frames still show fire (the device keeps counting while it sits closed for days)
+    MAX_BURN_SECONDS = 6 * 3600
+    # The temperature criterion only applies from this combustion time on: a fresh fire may
+    # take a while to heat the stove above TEMP_THRESHOLD
+    TEMP_CHECK_AFTER_SECONDS = 2 * 3600
+    # With no pixel above this temperature a mature burn is down to coals: the rest is idle
+    TEMP_THRESHOLD = 100.0  # °C
 
     def __init__(self, base_dir: str, initial_filename: str = "current_cycle.h5"):
         self.base_dir = Path(base_dir)
@@ -297,14 +320,26 @@ class HDF5Storage:
         self.pending: list = []  # packets not yet written
         self.pending_log: list = []  # log lines not yet written
         self.last_combustion_time: Optional[int] = None
+        # Device idle (burn timer at zero across consecutive packets): frames are paused
+        self.idle = False
 
     @property
     def log_filename(self) -> str:
         """Device log sidecar next to the current HDF5 file, e.g. current_cycle.log"""
         return str(Path(self.current_filename).with_suffix(".log"))
 
+    @property
+    def is_recording(self) -> bool:
+        """True while packets of a live burn are being stored: the file is open and the
+        device is not sitting idle between burns."""
+        return self.is_open and not self.idle
+
     def append_log(self, lines: list):
-        """Append device log lines to the sidecar of the current cycle."""
+        """Append device log lines to the sidecar of the current cycle. Between cycles and
+        while the device sits idle nothing is written: that chatter belongs to no burn."""
+        if not self.is_recording:
+            logger.debug(f"Not recording: dropping {len(lines)} device log line(s)")
+            return
         self.pending_log.extend(lines)
         self._write_pending_log()
 
@@ -424,10 +459,13 @@ class HDF5Storage:
 
         return max_cycle + 1
 
-    def rotate_file(self):
+    def rotate_file(self, reopen: bool = True):
         """
         Close current file and move it to archive directory structure.
-        Creates new file for next combustion cycle.
+
+        Args:
+            reopen: Open a new file for the next combustion cycle. Without it the storage
+            stays closed (end of cycle): nothing is written until the next cycle starts.
         """
         if not self.is_open:
             return
@@ -459,33 +497,100 @@ class HDF5Storage:
         if log_path.exists():
             shutil.move(str(log_path), str(new_filename.with_suffix(".log")))
 
-        # Open new file with temporary name in base directory
-        temp_filename = self.base_dir / self.initial_filename
-        self.current_filename = str(temp_filename)
-        self.open()
+        # Next file uses the temporary name in base directory
+        self.current_filename = str(self.base_dir / self.initial_filename)
+        if reopen:
+            self.open()
+        else:
+            logger.info(
+                "Burn cycle ended: nothing is written until the next combustion time reset"
+            )
+
+    def end_cycle(self):
+        """Archive the current file and stop writing until the next cycle starts."""
+        self.rotate_file(reopen=False)
 
     def check_rotation(self, combustion_time: int) -> bool:
         """
-        Check if file should be rotated based on combustion time reset.
+        Check if a new cycle starts, based on the device's burn timer.
+
+        The device restarts its combustion timer when a firing cycle begins after the vent
+        was reloaded while closed. It also starts counting from zero after the device sat
+        idle (e.g. a watchdog reboot between burns), where no drop is detectable. On either
+        the current file is archived; after an ended cycle, writing resumes with a new file.
 
         Args:
             combustion_time: Current combustion time in seconds
 
         Returns:
-            bool: True if rotation occurred
+            bool: True if a new cycle started
         """
+        started = False
+        was_idle = self.idle
+        prev = self.last_combustion_time
         # Detect reset: combustion_time drops significantly from previous value
-        if self.last_combustion_time is not None:
-            if combustion_time < self.last_combustion_time - 10:  # Allow some jitter
-                logger.info(
-                    f"Combustion time reset detected: {self.last_combustion_time}s -> {combustion_time}s"
-                )
+        if prev is not None and combustion_time < prev - 10:  # Allow some jitter
+            logger.info(
+                f"Combustion time reset detected: {prev}s -> "
+                f"{combustion_time}s, starting a new cycle"
+            )
+            if self.is_open:
                 self.rotate_file()
-                self.last_combustion_time = combustion_time
-                return True
-
+            else:
+                self.open()
+            started = True
+        elif was_idle and combustion_time > 0:
+            # The burn timer started counting after an idle period: new firing cycle
+            logger.info(
+                f"Combustion time counting again after idle ({combustion_time}s), "
+                "starting a new cycle"
+            )
+            if self.is_open:
+                self.rotate_file()
+            else:
+                self.open()
+            started = True
         self.last_combustion_time = combustion_time
-        return False
+        # The device idles with its burn timer at zero; a single zero packet also happens
+        # at the very start of a burn, so idleness needs two in a row
+        self.idle = combustion_time == 0 and prev == 0
+        return started
+
+    def check_end_of_burn(self, combustion_time: int, thermal_frame: np.ndarray) -> bool:
+        """
+        Check if the burn is over and end the cycle if it is.
+
+        A burn is over after MAX_BURN_SECONDS of combustion time, or once it is older than
+        TEMP_CHECK_AFTER_SECONDS and shows no pixel above TEMP_THRESHOLD (down to coals).
+        Ending the cycle archives the current file and stops writing until the next
+        combustion time reset.
+
+        Args:
+            combustion_time: Current combustion time in seconds
+            thermal_frame: Decoded thermal frame in Celsius
+
+        Returns:
+            bool: True if the cycle ended
+        """
+        if not self.is_open:
+            return False
+        if combustion_time >= self.MAX_BURN_SECONDS:
+            logger.info(
+                f"Combustion time {combustion_time}s over the {self.MAX_BURN_SECONDS}s limit: "
+                "no burn lasts that long, ending the cycle"
+            )
+        elif (
+            combustion_time >= self.TEMP_CHECK_AFTER_SECONDS
+            and float(np.max(thermal_frame)) < self.TEMP_THRESHOLD
+        ):
+            logger.info(
+                f"Combustion time {combustion_time}s with no pixel above "
+                f"{self.TEMP_THRESHOLD}°C: burn is down to coals, ending the cycle"
+            )
+        else:
+            return False
+        self.end_cycle()
+        return True
 
 
 # Device log lines that only repeat what each HDF5 frame already records
@@ -607,12 +712,36 @@ class StoveLinkService:
 
             logger.info(f"Processed packet #{self.packet_count} (seq: {decoded['sequence_id']})")
 
-            # Check for file rotation (combustion time reset)
+            # Idle is judged before the cycle state updates: the burn timer at zero for two
+            # consecutive packets means the device sits between burns
+            idle = (
+                decoded["combustion_time"] == 0
+                and self.storage.last_combustion_time == 0
+            )
+
+            # A combustion time reset - or the timer counting again after idle - starts the
+            # next cycle: archives the current file, or reopens writing after an ended cycle
             self.storage.check_rotation(decoded["combustion_time"])
 
-            # Store in HDF5, then file the log lines that preceded this frame with its cycle
-            self.storage.store_packet(decoded)
-            self._flush_log(decoded)
+            if self.storage.is_recording:
+                # Store in HDF5, then file the log lines that preceded this frame with its
+                # cycle
+                self.storage.store_packet(decoded)
+                self._flush_log(decoded)
+                # A burn that is over ends the cycle: archive the file and stop writing until
+                # the next combustion time reset. The final frame is stored first, so the
+                # archive records the state the burn ended in.
+                self.storage.check_end_of_burn(
+                    decoded["combustion_time"], decoded["thermal_frame"]
+                )
+            elif self.storage.is_open:
+                # The device idles between burns: frames are paused, and held log lines wait
+                # for the next recorded packet so the reload still files with the cycle it
+                # precedes
+                pass
+            else:
+                # Between cycles: held log lines belong to no cycle, drop them
+                self._flush_log(decoded)
 
             # Generate and publish dynamic range image
             dynamic_base64_image = self.dynamic_image_generator.get_base64_image(
