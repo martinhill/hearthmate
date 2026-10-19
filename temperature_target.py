@@ -19,6 +19,8 @@ PHASE_COALS = "coals"
 
 # Longest time step (s) one control update may act on
 MAX_CONTROL_DT = 30
+# Smallest vent move the actuator makes (Monitoring.min_steps = 8 motor steps), vent fraction
+ACTUATOR_DEADBAND = 0.07
 
 
 class TemperatureTargetFunction(VentFunctionABC):
@@ -234,6 +236,7 @@ class TemperatureTargetFunction(VentFunctionABC):
         self.rescue_time = None
         self.ignition_low = None
         self.stall_low = None
+        self.big_close_time = None  # last deliberate close (early, guard, manual), trim mode
         self.stale_warned = False
         self.fallback_time = None  # last fallback closing update while samples are missing
         self._rebase(position)
@@ -244,7 +247,9 @@ class TemperatureTargetFunction(VentFunctionABC):
         self.trim = 0.0
         self.probe_sign = 0
         self.probe_start = None
-        self.probe_rates = []  # [(sign, rise rate C/min)] of the last probe periods
+        self.probe_rates = []  # [(mean position, rise rate C/min)] of the last probe periods
+        self.probe_sum = 0.0  # commanded position summed over the current period's measurement
+        self.probe_count = 0
 
     @property
     def peaked_near_target(self):
@@ -276,6 +281,8 @@ class TemperatureTargetFunction(VentFunctionABC):
         old_position = self.position
         if new_position > self.position:
             self._log_close(self.time_func(), self.position)
+            if new_position - self.position >= 0.05:
+                self.big_close_time = self.time_func()
         self.position = new_position
         self.pi_position = new_position
         self._rebase(new_position)
@@ -321,7 +328,10 @@ class TemperatureTargetFunction(VentFunctionABC):
             "trim": self.trim,
             "probe_sign": self.probe_sign,
             "probe_age": self._age(self.probe_start),
-            "probe_rates": [[s, round(r, 3)] for s, r in self.probe_rates],
+            "probe_rates": [[round(p, 4), round(r, 3)] for p, r in self.probe_rates],
+            "probe_sum": round(self.probe_sum, 4),
+            "probe_count": self.probe_count,
+            "big_close_age": self._age(self.big_close_time),
         })
         return state
 
@@ -354,7 +364,14 @@ class TemperatureTargetFunction(VentFunctionABC):
         self.trim = state.get("trim", 0.0)
         self.probe_sign = state.get("probe_sign", 0)
         self.probe_start = self._time(state.get("probe_age"))
-        self.probe_rates = [(s, r) for s, r in state.get("probe_rates", [])]
+        # Saved before 18 Oct 2026 as (sign, rate): drop, it can't be read as positions
+        if "probe_sum" in state:
+            self.probe_rates = [(p, r) for p, r in state.get("probe_rates", [])]
+        else:
+            self.probe_rates = []
+        self.probe_sum = state.get("probe_sum", 0.0)
+        self.probe_count = state.get("probe_count", 0)
+        self.big_close_time = self._time(state.get("big_close_age"))
         self.spike_count = 0
         self.stale_warned = False
         self._log_event("resumed after %ds" % int(downtime))
@@ -541,6 +558,7 @@ class TemperatureTargetFunction(VentFunctionABC):
                 if caught and self.early_position > 0 and self.position < self.early_position:
                     old_position = self.position
                     self._log_close(now, self.position)
+                    self.big_close_time = now
                     self.position = self.early_position
                     self._log_event("early close %.3f -> %.3f" % (old_position, self.position))
                 self.pi_position = self.position
@@ -635,26 +653,37 @@ class TemperatureTargetFunction(VentFunctionABC):
                     vent was when regulating started (after the early close, a manual move or a
                     back-off)
           guard     a short prediction over the target closes faster, up to max_close_rate
-          trim      while climbing below the target, the vent alternates +/- dither around
-                    baseline + trim every probe_period. The second difference of three periods'
-                    rise rates cancels the steady drift of the rise rate and leaves the effect of
-                    closing by dither; the trim moves dither toward the faster climb, within
-                    +/- trim_band.
-        A drop below the target soon after a closing step (guard, probe or trim toward closed,
-        or a manual close) gets a back-off, as in predict mode; the baseline's slow creep doesn't
-        count as one."""
+          trim      while climbing below the target, the vent alternates +/- the dither around
+                    baseline + trim every probe_period. Each period's rise rate (after the
+                    response delay) and mean commanded position give, from second differences
+                    of three periods, the effect of closing on the rise rate with any steady
+                    drift of either cancelled; the trim moves dither toward the faster climb,
+                    within +/- trim_band.
+        The dither grows with the baseline's closing per period, so each switch still moves the
+        vent back past the actuator deadband (on 18 Oct 2026 a fixed +/-0.05 at a 30 min Closing
+        Duration never re-opened the vent, and the trim followed noise).
+
+        A drop below the target backs off only after a deliberate close (the early close, the
+        guard, a manual close) within stall_window, or when the fire never came near the target;
+        a burn-out under the schedule's routine closing is the coal stage (both burns of 18 Oct
+        2026 backed off as the fuel ran out)."""
         creep = dt / self.time_range if self.time_range > 0 else 0.0
         self.baseline = min(1.0, self.baseline + creep)
         if error > 0:
             step = min(self.max_close_rate * dt / 60, self.ki * error * dt / 60)
-            self.baseline = min(1.0, self.baseline + step)
-        if below and not falling and self.dither > 0:
+            if step > 0:
+                self.baseline = min(1.0, self.baseline + step)
+                self.big_close_time = now
+        if below and not falling and self.dither > 0 and self.baseline < 1.0:
             self._probe(now)
         else:
             self.probe_sign = 0
             self.probe_start = None
             self.probe_rates = []
-        position = min(1.0, max(0.0, self.baseline + self.trim + self.probe_sign * self.dither))
+        position = min(1.0, max(0.0, self.baseline + self.trim + self.probe_sign * self._dither()))
+        if self.probe_start is not None and now - self.probe_start >= self.probe_delay:
+            self.probe_sum += position
+            self.probe_count += 1
         if position > self.position + creep + 1e-6:
             # A closing step beyond the creep, remembered to attribute a later drop to it
             if not self.close_log or now - self.close_log[-1][0] >= 10:
@@ -662,14 +691,23 @@ class TemperatureTargetFunction(VentFunctionABC):
         self.position = position
         self.pi_position = position
 
-        if self.close_log:
-            if self._confirmed(below and falling, dt):
+        if self._confirmed(below and falling, dt):
+            recent_big_close = (
+                self.big_close_time is not None and now - self.big_close_time <= self.stall_window
+            )
+            if recent_big_close or (self.close_log and not self.peaked_near_target):
                 self._back_off(now, elapsed)
-        elif self._confirmed(below and falling, dt):
-            if self.peaked_near_target:
+            elif self.peaked_near_target:
                 self._set_phase(PHASE_COALS, elapsed, "coal stage")
             else:
                 self._set_phase(PHASE_STALLED, elapsed, "fire peaked below target")
+
+    def _dither(self):
+        """Probe amplitude: at least dither, and enough that switching from +amplitude to
+        -amplitude still re-opens the vent past the actuator deadband after the baseline's
+        closing over one period"""
+        creep = self.probe_period / self.time_range if self.time_range > 0 else 0.0
+        return max(self.dither, (ACTUATOR_DEADBAND + creep) / 2 + 0.01)
 
     def _probe(self, now):
         "One step of the trim probe; see _regulate_trim"
@@ -677,26 +715,33 @@ class TemperatureTargetFunction(VentFunctionABC):
             self.probe_start = now
             self.probe_sign = 1
             self.probe_rates = []
+            self.probe_sum, self.probe_count = 0.0, 0
             return
         if now - self.probe_start < self.probe_period:
             return
         rate = self._least_squares_slope(self.probe_start + self.probe_delay) * 60
-        self.probe_rates = (self.probe_rates + [(self.probe_sign, rate)])[-3:]
+        if self.probe_count:
+            mean_position = self.probe_sum / self.probe_count
+            self.probe_rates = (self.probe_rates + [(mean_position, rate)])[-3:]
         if len(self.probe_rates) == 3:
-            (_, r0), (s1, r1), (_, r2) = self.probe_rates
-            # Change in rise rate (C/min) from closing by dither; drift cancels
-            effect = s1 * (2 * r1 - r0 - r2) / 4
-            if abs(effect) >= self.trim_threshold:
-                old = self.trim
-                step = self.dither if effect > 0 else -self.dither
-                self.trim = max(-self.trim_band, min(self.trim_band, self.trim + step))
-                if self.trim != old:
-                    self._log_event(
-                        "trim %+.2f -> %+.2f: closing %.2f changes the rise by %+.1f/min"
-                        % (old, self.trim, self.dither, effect)
-                    )
+            (p0, r0), (p1, r1), (p2, r2) = self.probe_rates
+            position_curvature = 2 * p1 - p0 - p2
+            if abs(position_curvature) >= self.dither:
+                # Rise rate change per vent fraction closed, steady drifts cancelled
+                gain = (2 * r1 - r0 - r2) / position_curvature
+                effect = gain * self.dither
+                if abs(effect) >= self.trim_threshold:
+                    old = self.trim
+                    step = self.dither if effect > 0 else -self.dither
+                    self.trim = max(-self.trim_band, min(self.trim_band, self.trim + step))
+                    if self.trim != old:
+                        self._log_event(
+                            "trim %+.2f -> %+.2f: closing %.2f changes the rise by %+.1f/min"
+                            % (old, self.trim, self.dither, effect)
+                        )
         self.probe_sign = -self.probe_sign
         self.probe_start = now
+        self.probe_sum, self.probe_count = 0.0, 0
 
     def _back_off(self, now, elapsed):
         "Re-open to where the vent was before the recent closing steps, limited to backoff_limit"
@@ -705,7 +750,9 @@ class TemperatureTargetFunction(VentFunctionABC):
             self._set_phase(PHASE_STALLED, elapsed, reason)
             return
         old_position = self.position
-        earlier_position = self.close_log[0][1]
+        # Trim mode can back off after a deliberate close with no closing step logged since
+        # (the log keeps stall_window): re-open by the limit
+        earlier_position = self.close_log[0][1] if self.close_log else 0.0
         self.position = max(earlier_position, self.position - self.backoff_limit)
         self.rescues += 1
         self.rescue_time = now
