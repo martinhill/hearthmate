@@ -96,7 +96,7 @@ HEARTHMATE_SESSION=hm-agent TMUX= scripts/tmux.sh </dev/null >/dev/null 2>&1; sl
 uv run --project marimo python .claude/skills/run-hearthmate/driver.py check
 ```
 
-Expect `firmware syntax: 14/14 files ok`, both service suites passing (8/8, 4/4) and
+Expect `firmware syntax: 14/14 files ok`, both service suites passing (8/8, 6/6) and
 `restart: 127/127 restart checks passed` (soft reboots in every controller phase; ~45 s).
 Simulation regression across both stove models, parameter variants and sensor noise (~30 s):
 
@@ -121,7 +121,8 @@ cd simulation && uv run --project ../marimo python final.py
   end) means nothing happened.
 - **The share serves stale contents of files the StoveLink service still has open.** On the Mac,
   `current_cycle.log` showed the right size but old text. `burnlog` reads it over ssh instead.
-  Archived files read fine. `current_cycle.h5` can't be opened at all while the service holds it.
+  Archived files read fine. Since 18 Oct 2026 the service opens `current_cycle.h5` only while
+  writing a frame, so it can be read during a burn, e.g. with h5py from `/Volumes/Burnie`.
 - **The device clock reads 2000-01-01** (no RTC). Match device log lines to HDF5 frames by the `t=`
   / `combustion_time` and `seq` columns, not by time.
 - **Deploying reloads the device.** `scripts/deploy.sh -n` (read-only) shows what differs from
@@ -133,9 +134,10 @@ cd simulation && uv run --project ../marimo python final.py
 - **Autoreload is off while the firmware runs** and CircuitPython keeps that across soft
   reloads, so `code.py` turns it back on in every exit path. Keep it that way, or a crashed
   deploy can only be recovered by power-cycling the board.
-- **Don't leave web workflow pages open** (`http://<CP_HOST>/code/`, `/cp/serial/`) in a
-  browser. Background tabs are the suspected cause of the board's ~60 s stalls; `deploy.sh`,
-  `status`, `watch` and `burnlog` cover what those pages were used for.
+- **Don't open the web workflow in a browser** (`http://<CP_HOST>/`, `/code/`, `/cp/serial/`).
+  A browser's idle connection to it stalls the whole board for ~60 s or freezes it until the
+  watchdog resets it (seen twice on 18 Oct 2026). Short requests (curl, `wwshell`, `deploy.sh`)
+  are fine; `deploy.sh`, `status`, `watch` and `burnlog` cover what those pages were used for.
 - **`replay` is slow (~2 min)** because it reads every HDF5 burn file over SMB.
 
 ## Troubleshooting

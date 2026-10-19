@@ -14,6 +14,7 @@ sys.path.insert(0, "/Users/martin/Hacking/hearthmate/service")
 
 from stovelink_service import ThermalImageGenerator, StoveLinkDecoder, StoveLinkService
 import struct
+import h5py
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -444,10 +445,60 @@ class TestDeviceLog:
         with tempfile.TemporaryDirectory() as tmp:
             service = self.make_service(tmp)
             self.send_packet(service, 7, 50)
-            frames = service.storage.file["mlx90640_frames"].shape[0]
+            with h5py.File(Path(tmp) / "current_cycle.h5", "r") as h5:
+                frames = h5["mlx90640_frames"].shape[0]
             service.storage.close()
             assert service.packet_count == 1 and frames == 1, "Packet should be stored"
         print("✓ Packets still processed test passed")
+        self.passed_count += 1
+
+    def test_readable_during_cycle(self):
+        """The current cycle's files can be read between packets, and stay writable after"""
+        print("\n=== Device log 5: Readable During Cycle ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 1, 10)
+            self.send_log(service, "INFO vent_closer: Closed")
+            self.send_packet(service, 2, 20)
+            with h5py.File(Path(tmp) / "current_cycle.h5", "r") as h5:
+                seq = list(h5["sequence_ids"][:])
+            log_text = (Path(tmp) / "current_cycle.log").read_text()
+            self.send_packet(service, 3, 30)
+            with h5py.File(Path(tmp) / "current_cycle.h5", "r") as h5:
+                seq_after = list(h5["sequence_ids"][:])
+            service.storage.close()
+            print(f"Read during the cycle: seq {seq}, then {seq_after}")
+            assert seq == [1, 2] and seq_after == [1, 2, 3]
+            assert "INFO vent_closer: Closed" in log_text
+        print("✓ Readable during cycle test passed")
+        self.passed_count += 1
+
+    def test_failed_write_retried(self):
+        """A packet that can't be written (file busy) is kept and written with the next one"""
+        print("\n=== Device log 6: Failed Write Retried ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            real_file = h5py.File
+            calls = {"n": 0}
+
+            def busy_once(*args, **kwargs):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise PermissionError(13, "Permission denied")
+                return real_file(*args, **kwargs)
+
+            with mock.patch("stovelink_service.h5py.File", side_effect=busy_once):
+                self.send_packet(service, 1, 10)
+                assert len(service.storage.pending) == 1, "Unwritten packet should be kept"
+                self.send_packet(service, 2, 20)
+            with h5py.File(Path(tmp) / "current_cycle.h5", "r") as h5:
+                seq = list(h5["sequence_ids"][:])
+            service.storage.close()
+            print(f"Stored after the retry: seq {seq}")
+            assert seq == [1, 2] and not service.storage.pending
+        print("✓ Failed write retried test passed")
         self.passed_count += 1
 
     def run_all_tests(self):
@@ -459,6 +510,8 @@ class TestDeviceLog:
             self.test_rotation_moves_log_with_hdf5()
             self.test_flush_without_packets()
             self.test_packets_still_processed()
+            self.test_readable_during_cycle()
+            self.test_failed_write_retried()
             print("\n" + "=" * 60)
             print(f"✓ All tests passed! ({self.passed_count}/{self.test_count})")
             print("=" * 60)

@@ -267,7 +267,24 @@ class ThermalImageGenerator:
 class HDF5Storage:
     """
     Handles HDF5 storage of thermal camera data with automatic file rotation.
+
+    The HDF5 file and its log sidecar are opened only while a packet or log lines are written,
+    a few milliseconds every 10 s, so other programs can read the current cycle during a burn
+    (a file held open on the CIFS share can't even be copied). A write that fails, e.g. while a
+    reader has the file open, is kept and retried with the next one.
     """
+
+    # HDF5 dataset name -> decoded packet key
+    DATASETS = {
+        "mlx90640_frames": "thermal_frame",
+        "sequence_ids": "sequence_id",
+        "timestamps_ms": "timestamp_ms",
+        "vent_positions": "vent_position",
+        "tmp36_temps": "tmp36_temperature",
+        "combustion_times": "combustion_time",
+    }
+    # Packets kept while the file can't be written: an hour at one frame per 10 s
+    MAX_PENDING = 360
 
     def __init__(self, base_dir: str, initial_filename: str = "current_cycle.h5"):
         self.base_dir = Path(base_dir)
@@ -276,8 +293,9 @@ class HDF5Storage:
         # Initial file is in the base directory
         self.initial_filename = initial_filename
         self.current_filename = str(self.base_dir / initial_filename)
-        self.file: Optional[h5py.File] = None
-        self.log_file = None  # Device log text sidecar, opened on first write
+        self.is_open = False
+        self.pending: list = []  # packets not yet written
+        self.pending_log: list = []  # log lines not yet written
         self.last_combustion_time: Optional[int] = None
 
     @property
@@ -287,90 +305,91 @@ class HDF5Storage:
 
     def append_log(self, lines: list):
         """Append device log lines to the sidecar of the current cycle."""
-        if self.log_file is None:
-            self.log_file = open(self.log_filename, "a", encoding="utf-8")
-        for line in lines:
-            self.log_file.write(line + "\n")
-        self.log_file.flush()
-        os.fsync(self.log_file.fileno())
+        self.pending_log.extend(lines)
+        self._write_pending_log()
+
+    def _write_pending_log(self) -> bool:
+        if not self.pending_log:
+            return True
+        try:
+            with open(self.log_filename, "a", encoding="utf-8") as log_file:
+                for line in self.pending_log:
+                    log_file.write(line + "\n")
+                log_file.flush()
+                os.fsync(log_file.fileno())
+        except OSError as e:
+            logger.warning(f"Could not write {self.log_filename}, will retry: {e}")
+            return False
+        self.pending_log = []
+        return True
 
     def open(self, filename: Optional[str] = None):
-        """Open HDF5 file for writing."""
+        """Create the HDF5 file and its datasets if needed, and start storing to it."""
         if filename:
             self.current_filename = filename
-        self.file = h5py.File(self.current_filename, "a")
-
-        # Create datasets if they don't exist
-        if "mlx90640_frames" not in self.file:
+        with h5py.File(self.current_filename, "a") as file:
             # Unlimited size datasets
-            self.file.create_dataset(
-                "mlx90640_frames",
-                shape=(0, 24, 32),
-                maxshape=(None, 24, 32),
-                dtype=np.float32,
-                chunks=True,
-            )
-
-            self.file.create_dataset(
-                "sequence_ids", shape=(0,), maxshape=(None,), dtype=np.uint32, chunks=True
-            )
-
-            self.file.create_dataset(
-                "timestamps_ms", shape=(0,), maxshape=(None,), dtype=np.uint32, chunks=True
-            )
-
-            self.file.create_dataset(
-                "vent_positions", shape=(0,), maxshape=(None,), dtype=np.float32, chunks=True
-            )
-
-            self.file.create_dataset(
-                "combustion_times", shape=(0,), maxshape=(None,), dtype=np.uint16, chunks=True
-            )
-
-            self.file.create_dataset(
-                "tmp36_temps", shape=(0,), maxshape=(None,), dtype=np.float32, chunks=True
-            )
+            if "mlx90640_frames" not in file:
+                file.create_dataset(
+                    "mlx90640_frames",
+                    shape=(0, 24, 32),
+                    maxshape=(None, 24, 32),
+                    dtype=np.float32,
+                    chunks=True,
+                )
+            for name, dtype in (
+                ("sequence_ids", np.uint32),
+                ("timestamps_ms", np.uint32),
+                ("vent_positions", np.float32),
+                ("combustion_times", np.uint16),
+                ("tmp36_temps", np.float32),
+            ):
+                if name not in file:
+                    file.create_dataset(
+                        name, shape=(0,), maxshape=(None,), dtype=dtype, chunks=True
+                    )
+        self.is_open = True
 
     def store_packet(self, decoded_packet: dict):
         """Store a decoded packet in HDF5."""
-        if self.file is None:
+        if not self.is_open:
             raise RuntimeError("HDF5 file not opened")
+        self.pending.append(decoded_packet)
+        if len(self.pending) > self.MAX_PENDING:
+            self.pending.pop(0)
+            logger.error("HDF5 file unwritable for too long: dropping the oldest frame")
+        self._write_pending()
 
-        # Extend datasets
-        current_size = self.file["mlx90640_frames"].shape[0]
-        new_size = current_size + 1
-
-        for dataset_name in [
-            "mlx90640_frames",
-            "sequence_ids",
-            "timestamps_ms",
-            "vent_positions",
-            "tmp36_temps",
-            "combustion_times",
-        ]:
-            self.file[dataset_name].resize(new_size, axis=0)
-
-        # Store data
-        self.file["mlx90640_frames"][current_size] = decoded_packet["thermal_frame"]
-        self.file["sequence_ids"][current_size] = decoded_packet["sequence_id"]
-        self.file["timestamps_ms"][current_size] = decoded_packet["timestamp_ms"]
-        self.file["vent_positions"][current_size] = decoded_packet["vent_position"]
-        self.file["tmp36_temps"][current_size] = decoded_packet["tmp36_temperature"]
-        self.file["combustion_times"][current_size] = decoded_packet["combustion_time"]
-
-        # Flush to disk. fsync too: on a network share (CIFS) written data otherwise stays in the
-        # client cache until the file is closed at rotation, and a crash would lose the cycle.
-        self.file.flush()
-        os.fsync(self.file.id.get_vfd_handle())
+    def _write_pending(self) -> bool:
+        """Append the pending packets; on failure keep them for the next attempt."""
+        if not self.pending:
+            return True
+        try:
+            # Closing the file flushes it to the server: on the CIFS share written data otherwise
+            # stays in the client cache, and a crash would lose the cycle
+            with h5py.File(self.current_filename, "a") as file:
+                size = file["mlx90640_frames"].shape[0]
+                count = len(self.pending)
+                for name in self.DATASETS:
+                    file[name].resize(size + count, axis=0)
+                for i, packet in enumerate(self.pending):
+                    for name, key in self.DATASETS.items():
+                        file[name][size + i] = packet[key]
+        except OSError as e:
+            logger.warning(
+                f"Could not write {self.current_filename} ({len(self.pending)} frames "
+                f"pending), will retry: {e}"
+            )
+            return False
+        self.pending = []
+        return True
 
     def close(self):
-        """Close HDF5 file and log sidecar."""
-        if self.file is not None:
-            self.file.close()
-            self.file = None
-        if self.log_file is not None:
-            self.log_file.close()
-            self.log_file = None
+        """Write anything pending and stop storing to the current file."""
+        if self.is_open:
+            self._write_pending()
+        self._write_pending_log()
+        self.is_open = False
 
     def _get_next_cycle_number(self, date_dir: Path) -> int:
         """
@@ -410,10 +429,10 @@ class HDF5Storage:
         Close current file and move it to archive directory structure.
         Creates new file for next combustion cycle.
         """
-        if self.file is None:
+        if not self.is_open:
             return
 
-        # Close current file
+        # Write what is pending and stop storing to the current file
         self.close()
 
         # Get current timestamp for directory structure

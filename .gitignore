@@ -15,3 +15,5 @@ simulation/*.png
 # Local settings for desktop scripts; .env.example is the tracked template
 .env
 .envrc
+simulation/vent_steps_cache.npz
+simulation/vent_steps_rows.npy

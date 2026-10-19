@@ -10,7 +10,9 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 - Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs `requirements.txt`
   with circup). It reloads the device once; a burn resumes after the reload (`burn_state.py`).
 - Controller state that must survive a soft reboot goes in `save_state()`/`restore_state()` of the
-  vent functions; `simulation/restart.py` checks restarts in every phase.
+  vent functions; `simulation/restart.py` checks restarts in every phase. Restore fields added
+  later with `state.get(key, default)`: a deploy mid-burn restores a state saved by the previous
+  firmware.
 
 ## Code Style Guidelines
 
