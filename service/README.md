@@ -148,6 +148,21 @@ thermal_data.h5
 
 Where N is the number of frames stored.
 
+### Burn cycle rotation
+
+The current file is archived (and a new one started) when the device restarts its combustion
+timer, i.e. when a new firing cycle begins after a reload. A cycle also ends, archiving the
+file and stopping all writes until the next firing cycle, when the burn is over:
+
+- after 6 h of combustion time (`HDF5Storage.MAX_BURN_SECONDS`): no burn lasts that long, but
+  the device keeps counting while it sits closed for days before a reload;
+- when a burn older than 2 h (`TEMP_CHECK_AFTER_SECONDS`) shows no pixel above 100 °C
+  (`TEMP_THRESHOLD`): it is down to coals, and the rest is idle data.
+
+Between cycles the live camera images keep being published, but no frames or device log lines
+are written, so weeks of idle time don't pile cold frames into the data. The frame that ends a
+cycle is stored with the burn, recording the state it ended in.
+
 ### Device log
 
 With `--log-topic burnie/log`, the device's MQTT log lines are written to `current_cycle.log`

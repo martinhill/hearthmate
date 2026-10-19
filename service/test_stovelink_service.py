@@ -8,15 +8,15 @@ import sys
 import numpy as np
 import base64
 from io import BytesIO
+from pathlib import Path
 
-# Add service directory to path
-sys.path.insert(0, "/Users/martin/Hacking/hearthmate/service")
+# Add the service directory this file lives in to the path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from stovelink_service import ThermalImageGenerator, StoveLinkDecoder, StoveLinkService
 import struct
 import h5py
 import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
@@ -320,10 +320,12 @@ class TestThermalImageGenerator:
             return False
 
 
-def make_packet(sequence_id, combustion_time):
-    "StoveLink packet with a flat 100C frame"
-    header = struct.pack("<IIfHfH", sequence_id, sequence_id * 10000, 50.0, combustion_time, 20.0, 0)
-    return header + struct.pack("<768H", *([1000] * 768))
+def make_packet(sequence_id, combustion_time, max_temp=100.0):
+    "StoveLink packet with a flat thermal frame at max_temp °C"
+    header = struct.pack(
+        "<IIfHfH", sequence_id, sequence_id * 10000, 50.0, combustion_time, 20.0, 0
+    )
+    return header + struct.pack("<768H", *([int(max_temp * 10)] * 768))
 
 
 class TestDeviceLog:
@@ -528,7 +530,175 @@ class TestDeviceLog:
             return False
 
 
+class TestBurnCycle:
+    """Test cases for ending a cycle when the burn is over and resuming on the next firing"""
+
+    # Cycle end limits, mirroring HDF5Storage
+    MAX_BURN_SECONDS = 6 * 3600
+    TEMP_CHECK_AFTER_SECONDS = 2 * 3600
+
+    def __init__(self):
+        self.test_count = 0
+        self.passed_count = 0
+        self.client = SimpleNamespace(publish=lambda *args, **kwargs: None)
+
+    def make_service(self, hdf5_dir, **kwargs):
+        service = StoveLinkService(
+            mqtt_host="localhost",
+            mqtt_port=1883,
+            input_topic="burnie/stovelink",
+            dynamic_topic="burnie/thermal_camera/dynamic",
+            static_topic="burnie/thermal_camera/static",
+            static_min_temp=100.0,
+            static_max_temp=350.0,
+            hdf5_dir=hdf5_dir,
+            **kwargs,
+        )
+        service.storage.open()
+        return service
+
+    def send(self, service, topic, payload):
+        message = SimpleNamespace(topic=topic, payload=payload)
+        service._on_message(self.client, None, message)
+
+    def send_packet(self, service, sequence_id, combustion_time, max_temp=100.0):
+        self.send(
+            service, "burnie/stovelink", make_packet(sequence_id, combustion_time, max_temp)
+        )
+
+    def stored_sequences(self, path):
+        with h5py.File(path, "r") as h5:
+            return list(h5["sequence_ids"][:])
+
+    def test_max_burn_duration_ends_cycle(self):
+        """A burn past the 6 h limit ends the cycle even with fire still in the frame"""
+        print("\n=== Burn cycle 1: Max Burn Duration Ends Cycle ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 1, self.MAX_BURN_SECONDS - 20)
+            assert service.storage.is_open, "Cycle should still be open before the limit"
+            self.send_packet(service, 2, self.MAX_BURN_SECONDS + 10)
+            assert not service.storage.is_open, "Cycle should be ended past the limit"
+            assert not (Path(tmp) / "current_cycle.h5").exists(), "Current file should be archived"
+            archived = list(Path(tmp).glob("*/*/*.h5"))
+            assert len(archived) == 1, f"Expected one archived HDF5 file, got {archived}"
+            assert self.stored_sequences(archived[0]) == [1, 2], (
+                "The frame that ended the cycle should be stored with the burn"
+            )
+        print("✓ Max burn duration ends cycle test passed")
+        self.passed_count += 1
+
+    def test_cold_frame_after_two_hours_ends_cycle(self):
+        """A burn that shows no fire after 2 h is down to coals: the cycle ends"""
+        print("\n=== Burn cycle 2: Cold Frame After Two Hours Ends Cycle ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp)
+            self.send_packet(service, 1, self.TEMP_CHECK_AFTER_SECONDS - 10, max_temp=80.0)
+            assert service.storage.is_open, "Cold frames before 2 h should not end the cycle"
+            self.send_packet(service, 2, self.TEMP_CHECK_AFTER_SECONDS + 10, max_temp=150.0)
+            assert service.storage.is_open, "Fire in the frame should keep the cycle open"
+            self.send_packet(service, 3, self.TEMP_CHECK_AFTER_SECONDS + 30, max_temp=40.0)
+            assert not service.storage.is_open, "A cold frame after 2 h should end the cycle"
+            archived = list(Path(tmp).glob("*/*/*.h5"))
+            assert self.stored_sequences(archived[0]) == [1, 2, 3]
+        print("✓ Cold frame after two hours ends cycle test passed")
+        self.passed_count += 1
+
+    def test_nothing_written_until_next_cycle(self):
+        """After the cycle ends, packets and log lines are not written; the next combustion
+        time reset resumes writing with a fresh file"""
+        print("\n=== Burn cycle 3: Nothing Written Until Next Cycle ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp, log_topic="burnie/log")
+            self.send_packet(service, 1, self.TEMP_CHECK_AFTER_SECONDS + 10, max_temp=30.0)
+            assert not service.storage.is_open, "Cold burn should have ended the cycle"
+            archived = list(Path(tmp).glob("*/*/*.h5"))
+            archived_sequences = self.stored_sequences(archived[0])
+
+            # The stove sits cold: frames keep arriving but nothing is written
+            self.send_packet(service, 2, self.TEMP_CHECK_AFTER_SECONDS + 30, max_temp=30.0)
+            service._on_log_message(b"INFO temperature_target: temp_control start: reload")
+            self.send_packet(service, 3, self.TEMP_CHECK_AFTER_SECONDS + 60, max_temp=30.0)
+            assert service.packet_count == 3, "Packets should still be processed"
+            assert not (Path(tmp) / "current_cycle.h5").exists(), "Nothing should be written"
+            assert not (Path(tmp) / "current_cycle.log").exists(), "No log sidecar while idle"
+            assert self.stored_sequences(archived[0]) == archived_sequences, (
+                "The archived cycle should not change after the end"
+            )
+
+            # Days later the vent is opened for a reload: combustion time resets
+            self.send_packet(service, 4, 0, max_temp=30.0)
+            assert service.storage.is_open, "A combustion time reset should resume writing"
+            assert self.stored_sequences(Path(tmp) / "current_cycle.h5") == [4], (
+                "The new cycle should start with the reset packet"
+            )
+            assert len(list(Path(tmp).glob("*/*/*.h5"))) == 1, "No extra archive from resuming"
+        print("✓ Nothing written until next cycle test passed")
+        self.passed_count += 1
+
+    def test_log_dropped_between_cycles(self):
+        """Device log lines flushed between cycles are dropped, while the line logged just
+        before the reset packet is filed with the new cycle"""
+        print("\n=== Burn cycle 4: Log Dropped Between Cycles ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp, log_topic="burnie/log")
+            self.send_packet(service, 1, self.TEMP_CHECK_AFTER_SECONDS + 10, max_temp=30.0)
+            assert not service.storage.is_open, "Cold burn should have ended the cycle"
+            # An idle line flushed by the next idle packet: dropped, nothing is written
+            service._on_log_message(b"WARNING __main__: Coals detected, waiting")
+            self.send_packet(service, 2, self.TEMP_CHECK_AFTER_SECONDS + 40, max_temp=30.0)
+            assert not (Path(tmp) / "current_cycle.log").exists(), "Idle lines are not written"
+            # The reload line logged just before the reset packet belongs to the new cycle
+            service._on_log_message(b"INFO temperature_target: temp_control start: reload")
+            self.send_packet(service, 3, 0)  # combustion time reset: new cycle
+            self.send_packet(service, 4, 10)
+            service.storage.close()
+
+            new_rows = self.read_log(Path(tmp) / "current_cycle.log")
+            print(f"New cycle log: {new_rows}")
+            assert [r[3] for r in new_rows] == [
+                "INFO temperature_target: temp_control start: reload"
+            ], "The reload line should be filed with the new cycle"
+            assert (new_rows[0][1], new_rows[0][2]) == ("3", "0")
+            archived_logs = list(Path(tmp).glob("*/*/*.log"))
+            assert not archived_logs, f"Idle lines should not reach the archive: {archived_logs}"
+        print("✓ Log dropped between cycles test passed")
+        self.passed_count += 1
+
+    def read_log(self, path):
+        return [line.split("\t") for line in Path(path).read_text().splitlines()]
+
+    def run_all_tests(self):
+        print("=" * 60)
+        print("Burn Cycle Limit Test Suite")
+        print("=" * 60)
+        try:
+            self.test_max_burn_duration_ends_cycle()
+            self.test_cold_frame_after_two_hours_ends_cycle()
+            self.test_nothing_written_until_next_cycle()
+            self.test_log_dropped_between_cycles()
+            print("\n" + "=" * 60)
+            print(f"✓ All tests passed! ({self.passed_count}/{self.test_count})")
+            print("=" * 60)
+            return True
+        except AssertionError as e:
+            print(f"\n✗ Test failed: {e}")
+            print(f"Tests passed: {self.passed_count}/{self.test_count}")
+            return False
+        except Exception as e:
+            print(f"\n✗ Unexpected error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+
 if __name__ == "__main__":
     success = TestThermalImageGenerator().run_all_tests()
     success = TestDeviceLog().run_all_tests() and success
+    success = TestBurnCycle().run_all_tests() and success
     sys.exit(0 if success else 1)
