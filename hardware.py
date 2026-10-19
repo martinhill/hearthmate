@@ -1,6 +1,7 @@
 import time
 import os
 import board
+import busio
 import neopixel
 import digitalio
 import analogio
@@ -16,6 +17,10 @@ logger.setLevel(logging.INFO)
 # Constants for encoder calculations
 ENCODER_MAX_VALUE = 4096
 DEGREES_PER_ENCODER_UNIT = 360.0 / ENCODER_MAX_VALUE
+
+# I2C clock in Hz for the encoder, the motor FeatherWing and the camera; 0 keeps board.I2C()
+# (100 kHz). The MLX90640 reads its EEPROM at init, which must not exceed 400 kHz.
+I2C_FREQUENCY = int(os.getenv("I2C_FREQUENCY", "0"))
 
 
 def calculate_encoder_delta(start_raw, end_raw):
@@ -318,11 +323,16 @@ def get_hardware() -> Hardware:
     """
     Get the hardware object based on the presence of the AS5600 encoder.
     """
-    i2c = board.I2C()
+    if I2C_FREQUENCY:
+        i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
+    else:
+        i2c = board.I2C()
     i2c.try_lock()
     scan = i2c.scan()
     i2c.unlock()
-    logger.info("I2C scan: %s", [hex(addr) for addr in scan])
+    logger.info(
+        "I2C scan at %d Hz: %s", I2C_FREQUENCY or 100000, [hex(addr) for addr in scan]
+    )
 
     if 0x36 in scan and 0x60 in scan:
         hardware = Hardware(i2c, step_params)

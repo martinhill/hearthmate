@@ -35,3 +35,11 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 ## CircuitPython Version Notes
 
 **Minimum version: 10.2.0.** As of CircuitPython 10.2.0, `os.getenv()` always returns a `str`, even for unquoted integer values in `settings.toml` (e.g. `VENT_CLOSE_TIME = 2700` comes back as `'2700'`). All numeric env reads must be wrapped in `int()` or `float()`. Use `supervisor.get_setting()` if you need typed values, but prefer the cast-at-read pattern for consistency with the existing codebase.
+
+**I2C:** The encoder, motor FeatherWing and MLX90640 share one bus, clocked by `I2C_FREQUENCY`
+(`hardware.py`; 400 kHz on the board). Don't exceed 400 kHz: the MLX90640 reads its EEPROM at
+every driver init. `busio.I2C` has no `frequency` attribute, so log the setting instead.
+
+**ulab:** Each array operation allocates a new array; in a per-frame path that is heap pressure
+(see `docs_by_agents/MLX90640_PERFORMANCE.md`, `THERMAL_CAMERA_MEMORY_FIX.md`). `tobytes()`
+returns a view that minimqtt won't publish: wrap it in `bytes()` or prepend `b""`.

@@ -96,6 +96,11 @@ class MLX90640:
     cpKv = 0
 
     def __init__(self, i2c_bus: I2C, address: int = 0x33) -> None:
+        # Per instance: _ExtractDeviatingPixels appends to these, so with the shared class lists
+        # a second instance (camera recovery) found every deviating pixel twice and raised
+        # "Adjacent broken pixels"
+        self.brokenPixels = []
+        self.outlierPixels = []
         self.i2c_device = I2CDevice(i2c_bus, address)
         self._I2CReadWords(0x2400, eeData)
         # print(eeData)
@@ -186,11 +191,11 @@ class MLX90640:
     def _GetTa(self, frameData: List[int]) -> float:
         vdd = self._GetVdd(frameData)
 
-        ptat = frameData[800]
+        ptat = int(frameData[800])
         if ptat > 32767:
             ptat -= 65536
 
-        ptatArt = frameData[768]
+        ptatArt = int(frameData[768])
         if ptatArt > 32767:
             ptatArt -= 65536
         ptatArt = (ptat / (ptat * self.alphaPTAT + ptatArt)) * math.pow(2, 18)
@@ -200,7 +205,7 @@ class MLX90640:
         return ta
 
     def _GetVdd(self, frameData: List[int]) -> int:
-        vdd = frameData[810]
+        vdd = int(frameData[810])
         if vdd > 32767:
             vdd -= 65536
 

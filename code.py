@@ -13,7 +13,7 @@ import adafruit_logging as logging
 
 from state_machine import StateMachine, State, logger as sm_logger
 from hw_test import TestMotion, logger as test_logger
-from hardware import get_hardware, logger as hw_logger
+from hardware import get_hardware, MockHardware, I2C_FREQUENCY, logger as hw_logger
 from airvent import create_vent_from_env
 from vent_closer import (
     VentCloser,
@@ -458,6 +458,54 @@ def reload_device():
     supervisor.reload()
 
 
+def bench_camera(repeats):
+    """Time the per-pixel and ulab temperature calculations on the same frames and publish the
+    raw capture (the bench_camera command; scripts/bench_mlx90640.py). Blocks the main loop."""
+    if not hasattr(thermal_camera, "mlx"):
+        logger.warning("bench_camera: no MLX90640 (mock camera)")
+        return
+
+    def feed():
+        if WATCHDOG_TIMEOUT > 0:
+            microcontroller.watchdog.feed()
+
+    import mlx90640_bench
+
+    try:
+        capture = mlx90640_bench.run(
+            thermal_camera.i2c, thermal_camera.mlx, logger, repeats=repeats, feed=feed
+        )
+    except (OSError, RuntimeError, ValueError, MemoryError) as e:
+        logger.error("bench_camera failed: %s: %s", type(e).__name__, e)
+        return
+    try:
+        mqtt_client.publish(mqtt_topic + "/bench/raw", capture)
+    except (MMQTTException, OSError, ValueError) as e:
+        logger.error("bench_camera: could not publish the raw capture: %s", e)
+
+
+def bench_i2c(reads):
+    """Check the I2C bus at its clock (I2C_FREQUENCY): repeated camera EEPROM reads must match,
+    and the encoder reads (the bench_i2c command; scripts/bench_mlx90640.py). Blocks the main
+    loop."""
+    if not hasattr(thermal_camera, "mlx") or isinstance(hardware, MockHardware):
+        logger.warning("bench_i2c: needs the MLX90640 and the encoder (mock hardware)")
+        return
+
+    def feed():
+        if WATCHDOG_TIMEOUT > 0:
+            microcontroller.watchdog.feed()
+
+    import mlx90640_bench
+
+    try:
+        mlx90640_bench.check_bus(
+            I2C_FREQUENCY or 100000, thermal_camera.mlx, hardware, logger, reads=reads, feed=feed
+        )
+    except (OSError, RuntimeError, ValueError, MemoryError) as e:
+        logger.error("bench_i2c failed: %s: %s", type(e).__name__, e)
+
+
 if __name__ == "__main__":
 
     def command_handler(message):
@@ -476,6 +524,14 @@ if __name__ == "__main__":
             logger.warning("Testing the watchdog: main loop stopped, reset in %ds", WATCHDOG_TIMEOUT)
             while True:
                 time.sleep(1)
+        elif message.startswith("bench_camera"):
+            # bench_camera [repeats]
+            words = message.split()
+            bench_camera(int(words[1]) if len(words) > 1 and words[1].isdigit() else 3)
+        elif message.startswith("bench_i2c"):
+            # bench_i2c [reads]
+            words = message.split()
+            bench_i2c(int(words[1]) if len(words) > 1 and words[1].isdigit() else 50)
         elif message == "collect":
             logger.info("Free memory before GC: %d bytes", gc.mem_free())
             gc.collect()
