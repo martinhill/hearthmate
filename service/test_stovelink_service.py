@@ -669,6 +669,51 @@ class TestBurnCycle:
         print("✓ Log dropped between cycles test passed")
         self.passed_count += 1
 
+    def test_idle_between_burns_pauses_writing(self):
+        """While the device idles with its burn timer at zero, frames are not written; the
+        timer counting again starts a fresh cycle even without a combustion time reset"""
+        print("\n=== Burn cycle 5: Idle Between Burns Pauses Writing ===")
+        self.test_count += 1
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self.make_service(tmp, log_topic="burnie/log")
+            # The device reboots out of a young burn: the timer drops to zero, which the
+            # reset detection rotates on, and the zero frame marks the idle start
+            self.send_packet(service, 1, 7000, max_temp=150.0)
+            self.send_packet(service, 2, 0, max_temp=22.0)
+            assert service.storage.idle is False, "One zero packet is not idle yet"
+            assert self.stored_sequences(Path(tmp) / "current_cycle.h5") == [2]
+            # Idle: cold frames at timer zero are not written
+            self.send_packet(service, 3, 0, max_temp=22.0)
+            assert service.storage.idle, "Two zeros in a row are idle"
+            self.send_packet(service, 4, 0, max_temp=25.0)
+            assert self.stored_sequences(Path(tmp) / "current_cycle.h5") == [2], (
+                "Idle frames should not be written"
+            )
+            assert len(list(Path(tmp).glob("*/*/*.h5"))) == 1, "Nothing archived while idle"
+
+            # Days later a fire is lit: the timer counts again, which starts a fresh cycle
+            # even though the timer never dropped
+            service._on_log_message(b"INFO code: Detected vent open - engaging temp_control")
+            self.send_packet(service, 5, 0, max_temp=25.0)  # reload moment, still zero
+            self.send_packet(service, 6, 10, max_temp=180.0)
+            assert service.storage.idle is False, "Counting timer ends the idle"
+            assert self.stored_sequences(Path(tmp) / "current_cycle.h5") == [6], (
+                "The new burn should start a fresh file at its first counting frame"
+            )
+            archived = sorted(Path(tmp).glob("*/*/*.h5"))
+            assert len(archived) == 2, f"Expected the burn and the idle period archived: {archived}"
+            assert [self.stored_sequences(a) for a in archived] == [[1], [2]], (
+                "The archives should hold the burn frame and the idle-start frame"
+            )
+            service.storage.close()
+            new_rows = self.read_log(Path(tmp) / "current_cycle.log")
+            assert [r[3] for r in new_rows] == [
+                "INFO code: Detected vent open - engaging temp_control"
+            ], "The held reload line should file with the new cycle"
+            assert (new_rows[0][1], new_rows[0][2]) == ("6", "10")
+        print("✓ Idle between burns pauses writing test passed")
+        self.passed_count += 1
+
     def read_log(self, path):
         return [line.split("\t") for line in Path(path).read_text().splitlines()]
 
@@ -681,6 +726,7 @@ class TestBurnCycle:
             self.test_cold_frame_after_two_hours_ends_cycle()
             self.test_nothing_written_until_next_cycle()
             self.test_log_dropped_between_cycles()
+            self.test_idle_between_burns_pauses_writing()
             print("\n" + "=" * 60)
             print(f"✓ All tests passed! ({self.passed_count}/{self.test_count})")
             print("=" * 60)
