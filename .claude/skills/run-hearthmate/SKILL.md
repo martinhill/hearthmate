@@ -96,8 +96,9 @@ HEARTHMATE_SESSION=hm-agent TMUX= scripts/tmux.sh </dev/null >/dev/null 2>&1; sl
 uv run --project marimo python .claude/skills/run-hearthmate/driver.py check
 ```
 
-Expect `firmware syntax: 14/14 files ok`, both service suites passing (8/8, 6/6) and
-`restart: 127/127 restart checks passed` (soft reboots in every controller phase; ~45 s).
+Expect `firmware syntax: 14/14 files ok`, the service suites passing (8/8, 6/6, 5/5),
+`restart: 128/128 restart checks passed` (soft reboots in every controller phase; ~45 s) and
+`trim cases: 4/4 checks passed` (back-off vs coal stage, `simulation/trim_cases.py`).
 Simulation regression across both stove models, parameter variants and sensor noise (~30 s):
 
 ```bash

@@ -192,7 +192,13 @@ def cmd_check(args):
     for line in restart.stdout.splitlines():
         if "FAIL" in line or "checks passed" in line:
             print(f"restart: {line.strip()}")
-    sys.exit(1 if failed or result.returncode or restart.returncode else 0)
+    # Trim mode's back-off vs coal stage decisions on scripted traces
+    trim = subprocess.run([sys.executable, "trim_cases.py"], cwd=SIMULATION,
+                          capture_output=True, text=True)
+    for line in trim.stdout.splitlines():
+        if "FAIL" in line or "checks passed" in line:
+            print(f"trim cases: {line.strip()}")
+    sys.exit(1 if failed or result.returncode or restart.returncode or trim.returncode else 0)
 
 
 # --- live device (read-only MQTT) --------------------------------------------------------------
