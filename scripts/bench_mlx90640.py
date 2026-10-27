@@ -1,5 +1,5 @@
 """Compare the two MLX90640 temperature calculations: the per-pixel loop of the forked driver
-(adafruit_mlx90640.py) and the ulab one (numpy_mlx90640.py).
+(firmware/adafruit_mlx90640.py) and the ulab one (firmware/numpy_mlx90640.py).
 
     uv run --with numpy python scripts/bench_mlx90640.py check [CAPTURE]
     uv run --with numpy python scripts/bench_mlx90640.py device [--out FILE] [--repeats N]
@@ -12,7 +12,7 @@ check   runs both drivers unchanged on the desktop, against an emulated sensor, 
         both reading modes, plus a bad frame and a second driver instance. Desktop timings say
         nothing about the device, so there are none.
 device  sends the device the bench_camera command, which times both calculations on the same
-        raw frames (mlx90640_bench.py), prints its results from the log, saves the raw capture it
+        raw frames (firmware/mlx90640_bench.py), prints its results from the log, saves the raw capture it
         publishes (EEPROM and both subpages, in reference/ unless --out) and runs check on it.
         The main loop stops for the bench (about 5 s with 3 repeats), so run it while idle
         rather than mid-burn.
@@ -38,9 +38,9 @@ from pathlib import Path
 import numpy
 
 REPO = Path(__file__).resolve().parents[1]
-# The repo's logging.py shadows the stdlib logging (it imports adafruit_logging), so the repo goes
+# firmware/logging.py shadows the stdlib logging (it imports adafruit_logging), so firmware/ goes
 # at the END of sys.path.
-sys.path.append(str(REPO))
+sys.path.append(str(REPO / "firmware"))
 
 from dotenv import load_dotenv  # noqa: E402
 

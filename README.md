@@ -19,10 +19,10 @@ An experimental robot that controls a wood stove air vent to achieve optimal com
 - [Adafruit Motorkit library](https://docs.circuitpython.org/projects/motorkit/en/latest/)
 - [Adafruit motor library](https://docs.circuitpython.org/projects/motor/en/latest/)
 - [Adafruit MiniMQTT library](https://docs.circuitpython.org/projects/minimqtt/en/latest/)
-- Adafruit MLX90640 driver, forked in this repo (`adafruit_mlx90640.py`, overrides the library copy).
-  `numpy_mlx90640.py` is a ulab version of its calculation, benchmarked and not used; see
+- Adafruit MLX90640 driver, forked in this repo (`firmware/adafruit_mlx90640.py`, overrides the library
+  copy). `firmware/numpy_mlx90640.py` is a ulab version of its calculation, benchmarked and not used; see
   [docs_by_agents/MLX90640_PERFORMANCE.md](docs_by_agents/MLX90640_PERFORMANCE.md).
-- Plus each library's respective dependencies (`requirements.txt`)
+- Plus each library's respective dependencies (`firmware/requirements.txt`)
 
 ## Operating modes
 
@@ -41,8 +41,11 @@ cp .env.example .env    # then set CIRCUP_WEBWORKFLOW_PASSWORD
 uv sync                 # editor environment: Blinka + CircuitPython libraries, circup
 ```
 
+- `firmware/`: the CircuitPython code. Its contents go in the device's root directory
+  (CIRCUITPY), with `settings.toml` and the libraries in `lib/`.
+
 - `scripts/deploy.sh`: install or update the firmware over the web workflow. `-n` only shows
-  what differs, `--libs` also installs `requirements.txt`. After uploading it sends the reload
+  what differs, `--libs` also installs `firmware/requirements.txt`. After uploading it sends the reload
   command over MQTT (broker credentials in `~/.config/mosquitto_pub`) and reports whether the
   device resumed the burn; see below.
 - `scripts/tmux.sh`: watch the device log and state topics over MQTT (iTerm2: `tmux -CC`).
@@ -62,7 +65,7 @@ retained topic `<MQTT_TOPIC>/controller/saved` on every phase change and vent mo
 every 30 s. At boot it resumes only if CircuitPython reports a reload rather than a hard start,
 the device clock shows the state is under 5 minutes old (the clock restarts at 2000-01-01 after
 a hard reset), and the vent is where it was saved. Otherwise, e.g. after a power cut, it starts
-in idle as before. See `burn_state.py`; `simulation/restart.py` tests it.
+in idle as before. See `firmware/burn_state.py`; `simulation/restart.py` tests it.
 
 A hardware watchdog resets the board if the main loop stops for `WATCHDOG_TIMEOUT` seconds
 (120 by default): the board has frozen for good inside a network call while still answering

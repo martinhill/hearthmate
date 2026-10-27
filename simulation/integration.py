@@ -1,7 +1,7 @@
 """Drive the real VentCloser state machine + TemperatureTargetFunction with fake hardware and the
 stove model, exactly as code.py does (state update every loop, temperature every 10 s)."""
 import os, sys, json, importlib, types
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'firmware'))
 import logging; logging.basicConfig(level=logging.INFO, format="%(message)s")
 from airvent import Vent
 from vent_closer import VentCloser

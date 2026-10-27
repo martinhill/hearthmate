@@ -1,6 +1,7 @@
 """Closed-loop simulation of the vent strategies against the fitted stove model."""
 import json, os, sys, random, numpy as np
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))  # append: repo logging.py shadows stdlib
+# append: firmware/logging.py shadows stdlib
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'firmware'))
 import logging; logging.basicConfig(level=logging.WARNING)
 from temperature_target import TemperatureTargetFunction
 from plant_v3 import Stove, air  # ensemble.py swaps in other plant versions

@@ -4,14 +4,15 @@
 #   scripts/deploy.sh             show what differs, ask, then upload the changed files
 #   scripts/deploy.sh -n          only show what differs (no uploads)
 #   scripts/deploy.sh -y          upload without asking
-#   scripts/deploy.sh --libs      also install the libraries in requirements.txt (circup)
+#   scripts/deploy.sh --libs      also install the libraries in firmware/requirements.txt (circup)
 #   scripts/deploy.sh --no-reload upload only; run the new code later (HA Reload button)
-#   scripts/deploy.sh FILE...     limit to these files
+#   scripts/deploy.sh FILE...     limit to these files (names in firmware/)
 #
 # Needs uv; wwshell and circup come from the repo's pyproject.toml.
 #
-# The firmware files are code.py and the repo modules it imports, directly or indirectly, so a
-# new module is picked up without editing this script. code.py goes last. Files on the device
+# The firmware files are firmware/code.py and the modules in firmware/ it imports, directly or
+# indirectly, so a new module is picked up without editing this script. firmware/ maps to the
+# device's root directory (CIRCUITPY), and code.py goes last. Files on the device
 # that aren't part of the firmware are listed, never deleted. settings.toml (credentials) is
 # never uploaded; the script only warns if the device lacks one.
 #
@@ -30,6 +31,7 @@ set -eu
 setopt pipefail
 
 repo=${0:A:h:h}
+src=$repo/firmware
 if [[ -f $repo/.env ]]; then
     # Load .env without overriding variables already set in the environment
     while IFS='=' read -r key value; do
@@ -63,8 +65,8 @@ ww() {
     $uvrun wwshell --host "$host" "$@" 2>&1 | sed -E 's#//[^@/]*@#//#'
 }
 
-# code.py plus every repo module reachable from it through imports
-firmware=(${(f)"$(cd "$repo" && python3 - <<'EOF'
+# code.py plus every firmware module reachable from it through imports
+firmware=(${(f)"$(cd "$src" && python3 - <<'EOF'
 import ast, os
 
 seen, todo = [], ["code"]
@@ -86,7 +88,7 @@ EOF
 )"})
 (( $#files )) || files=($firmware)
 for file in $files; do
-    [[ -f $repo/$file ]] || { print -u2 "No such file in the repo: $file"; exit 2; }
+    [[ -f $src/$file ]] || { print -u2 "No such file in firmware/: $file"; exit 2; }
 done
 
 listing=$(ww ls /)
@@ -108,10 +110,10 @@ for file in $files; do
     ww get "$file" "$tmp/" >/dev/null
     if [[ ! -f $tmp/$file ]]; then
         print -u2 "Could not download $file"; exit 1
-    elif cmp -s "$repo/$file" "$tmp/$file"; then
+    elif cmp -s "$src/$file" "$tmp/$file"; then
         print "same     $file"
     else
-        print "changed  $file ($(diff "$tmp/$file" "$repo/$file" | grep -c '^[<>]') lines)"
+        print "changed  $file ($(diff "$tmp/$file" "$src/$file" | grep -c '^[<>]') lines)"
         changed+=($file)
     fi
 done
@@ -123,7 +125,7 @@ done
 (( ${device_files[(Ie)settings.toml]} )) || print "warning: the device has no settings.toml; create it from the README"
 
 if (( dry_run )); then
-    (( libs )) && print "would run: circup --host $host install -r requirements.txt"
+    (( libs )) && print "would run: circup --host $host install -r firmware/requirements.txt"
     exit 0
 fi
 if (( ! $#changed && ! libs )); then
@@ -139,15 +141,15 @@ fi
 
 if (( libs )); then
     # circup reads the password from CIRCUP_WEBWORKFLOW_PASSWORD
-    (cd "$repo" && $uvrun circup --host "$host" install -r requirements.txt 2>&1 | sed -E 's#//[^@/]*@#//#')
+    (cd "$src" && $uvrun circup --host "$host" install -r requirements.txt 2>&1 | sed -E 's#//[^@/]*@#//#')
 fi
 for file in $changed; do
     # put's optional LOCATION is a directory prefix joined to the file name: none means the root
-    out=$(ww put --overwrite "$repo/$file")
+    out=$(ww put --overwrite "$src/$file")
     # Check the upload by reading it back
     rm -f "$tmp/$file"
     ww get "$file" "$tmp/" >/dev/null
-    if ! cmp -s "$repo/$file" "$tmp/$file"; then
+    if ! cmp -s "$src/$file" "$tmp/$file"; then
         print -u2 "Upload of $file failed:\n$out"; exit 1
     fi
     print "uploaded $file"

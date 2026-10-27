@@ -30,10 +30,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 SIMULATION = REPO / "simulation"
-# Firmware modules run on CPython, but the repo's logging.py shadows the stdlib logging (it needs
-# adafruit_logging), so the repo goes at the END of sys.path.
+FIRMWARE = REPO / "firmware"
+# Firmware modules run on CPython, but firmware/logging.py shadows the stdlib logging (it needs
+# adafruit_logging), so firmware/ goes at the END of sys.path.
 sys.path.insert(0, str(SIMULATION))
-sys.path.append(str(REPO))
+sys.path.append(str(FIRMWARE))
 
 from dotenv import load_dotenv  # noqa: E402
 
@@ -44,13 +45,6 @@ BURNIE_DATA = Path(os.environ.get("BURNIE_DATA", "/Volumes/Burnie"))
 # The host running the StoveLink service and its data directory, for files it still has open
 STOVELINK_HOST = os.environ.get("STOVELINK_HOST")
 STOVELINK_DATA = os.environ.get("STOVELINK_DATA", "/mnt/burnie")
-
-FIRMWARE = [
-    "code.py", "temperature_target.py", "vent_closer.py", "state_machine.py", "airvent.py",
-    "hardware.py", "thermal_camera.py", "homeassistant.py", "connections.py", "vent_mover.py",
-    "stovelink.py", "measurement_buffer.py", "hw_test.py", "burn_state.py",
-]
-
 
 # --- sim -------------------------------------------------------------------------------------
 
@@ -173,13 +167,14 @@ def cmd_replay(args):
 
 def cmd_check(args):
     failed = 0
-    for name in FIRMWARE:
+    sources = sorted(FIRMWARE.glob("*.py"))
+    for path in sources:
         try:
-            py_compile.compile(str(REPO / name), doraise=True)
+            py_compile.compile(str(path), doraise=True)
         except py_compile.PyCompileError as e:
             print(e.msg)
             failed += 1
-    print(f"firmware syntax: {len(FIRMWARE) - failed}/{len(FIRMWARE)} files ok")
+    print(f"firmware syntax: {len(sources) - failed}/{len(sources)} files ok")
     uv = shutil.which("uv")
     result = subprocess.run([uv, "run", "python", "test_stovelink_service.py"],
                             cwd=REPO / "service", capture_output=True, text=True)

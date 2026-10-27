@@ -96,7 +96,7 @@ HEARTHMATE_SESSION=hm-agent TMUX= scripts/tmux.sh </dev/null >/dev/null 2>&1; sl
 uv run --project marimo python .claude/skills/run-hearthmate/driver.py check
 ```
 
-Expect `firmware syntax: 14/14 files ok`, the service suites passing (8/8, 6/6, 5/5),
+Expect `firmware syntax: 18/18 files ok` (every `firmware/*.py`), the service suites passing (8/8, 6/6, 5/5),
 `restart: 128/128 restart checks passed` (soft reboots in every controller phase; ~45 s) and
 `trim cases: 4/4 checks passed` (back-off vs coal stage, `simulation/trim_cases.py`).
 Simulation regression across both stove models, parameter variants and sensor noise (~30 s):
@@ -107,11 +107,11 @@ cd simulation && uv run --project ../marimo python final.py
 
 ## Gotchas
 
-- **The repo's `logging.py` shadows the stdlib `logging`** and imports `adafruit_logging`. The repo
-  root must come *last* on `sys.path`, and `uv run --project marimo python -c "..."` run from the
-  repo root fails with `No module named 'adafruit_logging'`. The driver handles this; scripts in
-  `simulation/` append the repo root for the same reason.
-- **Only some firmware modules run on CPython.** `temperature_target`, `vent_closer`,
+- **`firmware/logging.py` shadows the stdlib `logging`** and imports `adafruit_logging`.
+  `firmware/` must come *last* on `sys.path`, and `uv run --project ../marimo python -c "..."` run
+  from `firmware/` fails with `No module named 'adafruit_logging'`. The driver handles this; scripts
+  in `simulation/` append `firmware/` for the same reason.
+- **Only some firmware modules (`firmware/`) run on CPython.** `temperature_target`, `vent_closer`,
   `state_machine` and `airvent` do; `code.py`, `hardware.py` and `thermal_camera.py` need
   CircuitPython (`board`, `wifi`, `ulab`). `check` only syntax-checks those.
 - **The live driver is read-only on purpose.** Commands to `burnie/command` or
@@ -129,7 +129,7 @@ cd simulation && uv run --project ../marimo python final.py
 - **Deploying reloads the device.** `scripts/deploy.sh -n` (read-only) shows what differs from
   the device; uploading (`scripts/deploy.sh`) is for the person to run: it ends with the MQTT
   `reload` command, and the device resumes the burn from the retained
-  `burnie/controller/saved` state (`burn_state.py`). Firmware from before that resume reloads on
+  `burnie/controller/saved` state (`firmware/burn_state.py`). Firmware from before that resume reloads on
   every upload and starts in `idle`. `wwshell` prints the web workflow password in its
   "Found device" line; the script strips it.
 - **Autoreload is off while the firmware runs** and CircuitPython keeps that across soft
@@ -143,8 +143,8 @@ cd simulation && uv run --project ../marimo python final.py
 
 ## Troubleshooting
 
-- **`No module named 'adafruit_logging'`**: something imported the repo's `logging.py`. Run the
-  driver as shown, not with `-c` from the repo root.
+- **`No module named 'adafruit_logging'`**: something imported `firmware/logging.py`. Run the
+  driver as shown, not with `-c` from `firmware/`.
 - **`zsh: command not found: mosquitto_sub` in tmux panes**: the tmux server's PATH lacks the
   install location. `scripts/tmux.sh` resolves the full path; installing mosquitto via nix-darwin
   puts it on every PATH.

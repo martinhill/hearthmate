@@ -5,7 +5,7 @@ enough for the decision logic.
     uv run --project ../marimo python trim_cases.py
 """
 import os, sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'firmware'))
 import logging; logging.basicConfig(level=logging.WARNING, format="%(message)s")
 from temperature_target import TemperatureTargetFunction
 
