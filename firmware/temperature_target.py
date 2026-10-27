@@ -281,7 +281,10 @@ class TemperatureTargetFunction(VentFunctionABC):
         old_position = self.position
         if new_position > self.position:
             self._log_close(self.time_func(), self.position)
-            if new_position - self.position >= 0.05:
+            # After the fire came near the target, closing by hand says it's burning down: a
+            # decline is the coal stage, not starvation (on 24 Oct 2026 a back-off was about to
+            # undo the close)
+            if new_position - self.position >= 0.05 and not self.peaked_near_target:
                 self.big_close_time = self.time_func()
         self.position = new_position
         self.pi_position = new_position
@@ -669,7 +672,10 @@ class TemperatureTargetFunction(VentFunctionABC):
         2026 backed off as the fuel ran out)."""
         creep = dt / self.time_range if self.time_range > 0 else 0.0
         self.baseline = min(1.0, self.baseline + creep)
-        if error > 0:
+        if error > 0 and self.baseline < 1.0:
+            # Only a guard step that moves the vent is a deliberate close: on 24 Oct 2026 the
+            # guard held a closed vent over the target for 40 min, and the burn-out after backed
+            # off as if the guard had starved it
             step = min(self.max_close_rate * dt / 60, self.ki * error * dt / 60)
             if step > 0:
                 self.baseline = min(1.0, self.baseline + step)

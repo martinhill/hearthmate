@@ -12,3 +12,11 @@ dependencies = [
     "circup>=3.1.0",
     "python-dotenv>=1.2.4",
 ]
+
+[tool.pyright]
+# The firmware's modules import each other by bare name, as on the device
+extraPaths = ["firmware"]
+# Zed may hand the language server a bare interpreter; the libraries are in the uv environment
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"

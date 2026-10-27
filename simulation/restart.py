@@ -10,7 +10,7 @@ clock restarts at zero, which exercises re-anchoring every saved time.
     uv run --project ../marimo python restart.py -v       # also each restart
 """
 import os, sys, json, importlib, types
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'firmware'))
 import logging; logging.basicConfig(level=logging.WARNING, format="%(message)s")
 from airvent import Vent
 from vent_closer import VentCloser, LinearVentFunction

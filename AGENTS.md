@@ -1,14 +1,22 @@
 # Agent Guidelines for Hearthmate
 
 ## Project Overview
-CircuitPython 10.3.x project for an automated wood stove air vent controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor. Main files: `code.py`, `state_machine.py`, `testing.py`, `hardware.py`.
+CircuitPython 10.3.x project for an automated wood stove air vent controller using ESP32 Feather v2, stepper motor, and AS5600 position sensor.
+
+## Layout
+- `firmware/`: the CircuitPython code, deployed to the device's root directory (CIRCUITPY).
+  Main files: `code.py`, `state_machine.py`, `hw_test.py`, `hardware.py`; device libraries in
+  `requirements.txt`. Modules import each other by bare name, as on the device.
+- `simulation/`: desktop tools (CPython) that append `firmware/` to `sys.path`. `marimo/`: the
+  burn data viewer.
+- `service/`: the StoveLink service. `scripts/`: deploy, monitoring and bench tools.
 
 ## Build & Test Commands
 - No traditional build system; runs directly on CircuitPython device
 - Desktop environment: `uv sync` (root `pyproject.toml`): Blinka and the CircuitPython libraries for
   editor completion, circup and python-dotenv. Simulation/notebooks use `marimo/`, the service `service/`
-- Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs `requirements.txt`
-  with circup). It reloads the device once; a burn resumes after the reload (`burn_state.py`).
+- Device upload: `scripts/deploy.sh` (`-n` shows what differs, `--libs` also installs
+  `firmware/requirements.txt` with circup). It reloads the device once; a burn resumes after the reload (`firmware/burn_state.py`).
 - Controller state that must survive a soft reboot goes in `save_state()`/`restore_state()` of the
   vent functions; `simulation/restart.py` checks restarts in every phase. Restore fields added
   later with `state.get(key, default)`: a deploy mid-burn restores a state saved by the previous
@@ -37,7 +45,7 @@ CircuitPython 10.3.x project for an automated wood stove air vent controller usi
 **Minimum version: 10.2.0.** As of CircuitPython 10.2.0, `os.getenv()` always returns a `str`, even for unquoted integer values in `settings.toml` (e.g. `VENT_CLOSE_TIME = 2700` comes back as `'2700'`). All numeric env reads must be wrapped in `int()` or `float()`. Use `supervisor.get_setting()` if you need typed values, but prefer the cast-at-read pattern for consistency with the existing codebase.
 
 **I2C:** The encoder, motor FeatherWing and MLX90640 share one bus, clocked by `I2C_FREQUENCY`
-(`hardware.py`; 400 kHz on the board). Don't exceed 400 kHz: the MLX90640 reads its EEPROM at
+(`firmware/hardware.py`; 400 kHz on the board). Don't exceed 400 kHz: the MLX90640 reads its EEPROM at
 every driver init. `busio.I2C` has no `frequency` attribute, so log the setting instead.
 
 **ulab:** Each array operation allocates a new array; in a per-frame path that is heap pressure

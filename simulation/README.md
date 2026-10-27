@@ -2,7 +2,7 @@
 
 Desktop-only tools (CPython, not deployed to the device) for fitting stove models to recorded
 StoveLink burns and tuning `TemperatureTargetFunction`. The simulator imports the real
-`temperature_target.py` and `vent_closer.py` from the repo root, so it exercises the device code.
+`firmware/temperature_target.py` and `firmware/vent_closer.py`, so it exercises the device code.
 
 Run with the marimo environment, adding scipy for fitting:
 

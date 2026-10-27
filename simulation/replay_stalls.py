@@ -12,7 +12,7 @@ checks:
 import glob, os, sys
 import numpy as np, h5py
 from data import ROOT, load
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'firmware'))
 import logging; logging.basicConfig(level=logging.WARNING)
 from temperature_target import TemperatureTargetFunction, PHASE_IGNITION, PHASE_REGULATE
 
