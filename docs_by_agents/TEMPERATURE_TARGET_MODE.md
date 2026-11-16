@@ -127,7 +127,10 @@ the same slope as the linear closer, which now sets this rate in both modes.
 
 ### Regulate strategy `predict`: close-only PI controller
 
-The default (`TT_REGULATE = "predict"`), and the strategy the simulation results below are for.
+Set with `TT_REGULATE = "predict"`; the strategy the simulation results below are for
+(`simulation/closedloop.py` runs it unless told otherwise). Not the default since 15 Nov 2026:
+below the target it holds the vent wherever ignition left it, so a slow climber burns wide open
+until the prediction reaches 300°C.
 Each update:
 
 1. **PI step, velocity form:** `du = Kp·Δe + Ki·e·dt/60`
@@ -168,7 +171,7 @@ blame it is `coals` (peaked near the target) or `stalled`.
 
 ### Regulate strategy `trim`: linear closer with a probed trim
 
-Experimental (`TT_REGULATE = "trim"`). The stove runs this mode since 18 Oct 2026. Instead of
+The default (`TT_REGULATE = "trim"`) since 15 Nov 2026; the stove ran it from 18 Oct 2026. Instead of
 deciding from the prediction when to close, it follows the timed closer and only adjusts it:
 
 `u = baseline + trim + probe`, clipped to 0..1.
@@ -276,7 +279,7 @@ unchanged; `TemperatureTargetFunction` replaces `LinearVentFunction`.
 |---|---|---|
 | `TT_TARGET` | 300 | Target max glass temperature, °C |
 | `TT_MARGIN` | 25 | °C below target that counts as "not at target" |
-| `TT_REGULATE` | predict | Regulate strategy: `predict` (close-only PI) or `trim` (linear closer plus probed trim) |
+| `TT_REGULATE` | trim | Regulate strategy: `predict` (close-only PI) or `trim` (linear closer plus probed trim) |
 | `TT_KP` | 0.01 | Vent fraction per °C change in predicted error (`predict`) |
 | `TT_KI` | 0.006 | Vent fraction per °C of predicted error per minute (`predict`; `trim`'s guard) |
 | `TT_HORIZON` | 450 (120 in `trim`) | Prediction horizon, s |
@@ -417,7 +420,10 @@ From the recorded burns (tables above):
   target can't exploit.
 
 So `trim` keeps the timed closer's predictable schedule, which you already trusted, and only
-measures and corrects around it. It is experimental and not the default.
+measures and corrects around it. It became the default on 15 Nov 2026. The board replaced on
+14 Nov got the only saved settings.toml, an older copy without `TT_REGULATE`, so it ran
+`predict`: after a back-off during ignition the vent stayed wide open
+for 15 minutes while the fire climbed slowly from 160°C toward 250°C, until it was closed by hand.
 
 ### Tuning
 
