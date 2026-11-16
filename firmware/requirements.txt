@@ -8,3 +8,5 @@ adafruit_ticks
 adafruit_minimqtt
 adafruit_mlx90640
 neopixel
+adafruit_logging
+adafruit_itertools
