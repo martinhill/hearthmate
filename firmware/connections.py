@@ -19,13 +19,17 @@ class WiFiConnectionManager:
         Initialize WiFi connection manager.
 
         Args:
-            ssid: WiFi SSID (defaults to WIFI_SSID env var)
-            password: WiFi password (defaults to WIFI_PASSWORD env var)
+            ssid: WiFi SSID (defaults to WIFI_SSID, then CIRCUITPY_WIFI_SSID)
+            password: WiFi password (defaults to WIFI_PASSWORD, then CIRCUITPY_WIFI_PASSWORD)
             base_delay: Initial backoff delay in seconds (default: 2)
             max_delay: Maximum backoff delay in seconds (default: 300)
         """
-        self.ssid = ssid or os.getenv("WIFI_SSID")
-        self.password = password or os.getenv("WIFI_PASSWORD")
+        # CIRCUITPY_WIFI_* is what CircuitPython itself connects with; a settings.toml with only
+        # those (15 Nov 2026) would otherwise reconnect with None after a WiFi drop
+        self.ssid = ssid or os.getenv("WIFI_SSID") or os.getenv("CIRCUITPY_WIFI_SSID")
+        self.password = (
+            password or os.getenv("WIFI_PASSWORD") or os.getenv("CIRCUITPY_WIFI_PASSWORD")
+        )
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.current_delay = base_delay

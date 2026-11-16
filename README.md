@@ -84,8 +84,9 @@ files in place. It is turned back on whenever the main loop exits, so a fixed up
 reloads code that crashed.
 
 `settings.toml` on the device holds WiFi, MQTT and web workflow credentials and isn't in the
-repo. Firmware settings are read with `os.getenv` there, e.g. `AUTO_MODE`, `VENT_CLOSE_TIME`,
-the `TT_*` temperature control settings, `WIFI_POWER_MANAGEMENT` (`none` by default, `min`
+repo. Create it from `firmware/settings.toml.example`, which has every setting with the values
+the stove runs; `scripts/deploy.sh` warns when the device's copy lacks one of its keys.
+Firmware settings are read with `os.getenv` there, e.g. `AUTO_MODE`, `VENT_CLOSE_TIME`, the `TT_*` temperature control settings, `WIFI_POWER_MANAGEMENT` (`none` by default, `min`
 is the CircuitPython default), `AUTORELOAD` (`off` by default), `WATCHDOG_TIMEOUT` and
 `I2C_FREQUENCY` (100 kHz when unset; the board runs at 400000, the camera's limit for EEPROM
 reads, which saves ~230 ms per thermal frame).

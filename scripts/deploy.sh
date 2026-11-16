@@ -14,7 +14,8 @@
 # indirectly, so a new module is picked up without editing this script. firmware/ maps to the
 # device's root directory (CIRCUITPY), and code.py goes last. Files on the device
 # that aren't part of the firmware are listed, never deleted. settings.toml (credentials) is
-# never uploaded; the script only warns if the device lacks one.
+# never uploaded; the script warns if the device lacks one, or lacks a key that
+# firmware/settings.toml.example sets.
 #
 # After the uploads it sends the device the reload command over MQTT (mosquitto_pub, with broker
 # credentials in ~/.config/mosquitto_pub) and waits for the device to report whether it resumed
@@ -122,7 +123,24 @@ for file in $device_files; do
         print "extra    $file (on the device only, left alone)"
     fi
 done
-(( ${device_files[(Ie)settings.toml]} )) || print "warning: the device has no settings.toml; create it from the README"
+if (( ${device_files[(Ie)settings.toml]} )); then
+    # Keys set in the template but missing on the device (a board restored from an old copy ran
+    # without TT_REGULATE and I2C_FREQUENCY, 15 Nov 2026). Only key names are compared; the
+    # downloaded copy holds credentials and is removed with $tmp.
+    toml_keys() { sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=.*/\1/p' "$1" | sort -u }
+    ww get settings.toml "$tmp/" >/dev/null
+    if [[ -f $tmp/settings.toml ]]; then
+        missing=(${(f)"$(comm -23 <(toml_keys "$src/settings.toml.example") \
+            <(toml_keys "$tmp/settings.toml"))"})
+        rm -f "$tmp/settings.toml"
+        (( $#missing )) && print "warning: settings.toml on the device lacks ${(j:, :)missing}" \
+            "(see firmware/settings.toml.example)"
+    else
+        print "warning: could not download settings.toml to check its keys"
+    fi
+else
+    print "warning: the device has no settings.toml; create it from firmware/settings.toml.example"
+fi
 
 if (( dry_run )); then
     (( libs )) && print "would run: circup --host $host install -r firmware/requirements.txt"
