@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
@@ -103,7 +103,7 @@ def frame_filter(
     )
 
 
-@app.cell(hide_code=True)
+@app.cell(hide_code=True, expand_output=True)
 def _(
     alt,
     fcombustion_times,

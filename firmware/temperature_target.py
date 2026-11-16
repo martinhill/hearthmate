@@ -120,9 +120,12 @@ class TemperatureTargetFunction(VentFunctionABC):
         )
 
         # Regulate phase strategy: "trim" follows the linear closer with a bounded trim found by
-        # probing the vent; "predict" closes only once the long-range prediction passes the target
-        # (predict until trim is validated: see simulation/stepcheck.py)
-        self.regulate = regulate or os.getenv("TT_REGULATE", "predict")
+        # probing the vent; "predict" closes only once the long-range prediction passes the target.
+        # trim is the default: predict holds the vent wide open while a slow fire climbs below
+        # the target, and the excess air slows the climb (15 Nov 2026: the replacement board got an
+        # older settings.toml without TT_REGULATE, ran predict, and after a back-off in ignition
+        # held the vent wide open for 15 min until it was closed by hand)
+        self.regulate = regulate or os.getenv("TT_REGULATE", "trim")
         trim_mode = self.regulate == "trim"
 
         # target: degC, max pixel of the glass-door thermal frame

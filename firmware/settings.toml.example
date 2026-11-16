@@ -1,0 +1,63 @@
+# Template for the device's settings.toml (CIRCUITPY root). Copy it, fill in the credentials and
+# the calibration, and keep the result out of the repo. scripts/deploy.sh never uploads either
+# file; it warns when the device's settings.toml lacks a key that is set (uncommented) here.
+#
+# Values are the ones the stove runs. Commented lines show the firmware default, for tuning.
+# CircuitPython >= 10.2 returns every value as a str; the firmware casts at read.
+
+# --- Credentials (fill in) ---------------------------------------------------------------------
+CIRCUITPY_WIFI_SSID = "..."
+CIRCUITPY_WIFI_PASSWORD = "..."
+# Web workflow password (deploy.sh: CIRCUP_WEBWORKFLOW_PASSWORD in .env)
+CIRCUITPY_WEB_API_PASSWORD = "..."
+MQTT_HOST = "homeassistant"
+MQTT_USER = "..."
+MQTT_PASSWORD = "..."
+MQTT_TOPIC = "burnie"
+# WIFI_SSID / WIFI_PASSWORD: for reconnects; fall back to the CIRCUITPY_WIFI_* values
+
+# --- Vent calibration (AS5600 raw angle; this install, measure with hw_test.py) ----------------
+OPEN_POSITION = 2917
+CLOSED_POSITION = 1225
+NUM_ZERO_CROSSINGS = 1
+
+# --- Control -----------------------------------------------------------------------------------
+# timed_close or temp_control, selected after a reload (HA mode select overrides)
+AUTO_MODE = "temp_control"
+# Closing Duration, s: a full open->closed stroke at the linear rate (HA entity shares it)
+VENT_CLOSE_TIME = 2700
+# Regulate strategy: trim (linear closer plus a probed trim) or predict (close-only PI)
+TT_REGULATE = "trim"
+# TT_TARGET = 300
+# TT_EARLY_POSITION = 0.25
+# TT_MARGIN = 25
+# The other TT_* settings: docs_by_agents/TEMPERATURE_TARGET_MODE.md
+
+# --- Thermal camera and I2C --------------------------------------------------------------------
+# Camera, encoder and motor FeatherWing share the bus. 400 kHz is the camera's limit for its
+# EEPROM reads and saves ~230 ms per frame; unset means 100 kHz.
+I2C_FREQUENCY = 400000
+THERMAL_CAMERA_INTERVAL = 10
+THERMAL_MAX_TEMP_CHANGE = 100
+# THERMAL_SUBPAGE_THRESHOLD = 10.0
+# MEASUREMENT_BUFFER_INTERVAL = 15
+
+# --- Stepper motion, s -------------------------------------------------------------------------
+STEP_INITIAL_DELAY = "0.1"
+STEP_FINAL_DELAY = "0.1"
+STEP_ACCELERATION = "0.025"
+STEP_DECELERATION = "0.025"
+# STEP_MIN_DELAY = "0.05"
+# MOTOR_STEPS_PER_REVOLUTION = 200
+
+# --- System ------------------------------------------------------------------------------------
+LOG_LEVEL = "DEBUG"
+# FILE_LOG_LEVEL = "INFO"
+# MQTT_LOG_LEVEL = "INFO"
+# WIFI_POWER_MANAGEMENT = "none"
+# AUTORELOAD = "off"
+# WATCHDOG_TIMEOUT = 120
+# MQTT_TIMEOUT = "0.1"
+# MQTT_KEEP_ALIVE = 300
+# LOW_MEMORY_THRESHOLD = 50000
+# HA_DISCOVERY_PREFIX = "homeassistant"

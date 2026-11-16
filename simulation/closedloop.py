@@ -24,8 +24,11 @@ def run(params, burn, strategy, target=300, close_time=2700, ctl_kwargs=None, no
     clock = Clock()
     ctl = None
     if strategy == "temp":
+        # predict unless asked otherwise: the tuning (tune.py, final.py) is for predict; trim is
+        # compared in compare.py
+        kwargs = {"regulate": "predict", **(ctl_kwargs or {})}
         ctl = TemperatureTargetFunction(target=target, time_range=close_time, time_func=clock,
-                                        **(ctl_kwargs or {}))
+                                        **kwargs)
         ctl.start(0.0)
     u_act = 0.0
     pipeline = [0.0] * int(delay / DT)  # extra transport delay, conservative
